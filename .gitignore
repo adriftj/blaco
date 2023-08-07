@@ -1,0 +1,33 @@
+# Object files
+*.o
+*.o.*
+*.ko
+*.obj
+*.elf
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects
+*.so
+*.so.*
+*.dll
+
+# Binary files
+*.exe
+
+# Temp files
+*.*~
+*.pid
+*.log
+*.depend
+vs/x64
+.vs/
+vs/*.user
+build/
+
+# Files that we don't want to ignore
+!.gitignore
