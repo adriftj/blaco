@@ -336,14 +336,14 @@ void OnTimerDeleted(const char* s) {
 		<< ":" << tm->tm_min << ":" << tm->tm_sec << std::endl;
 }
 
-TEST_CASE("test timer") {
+TEST_CASE("est timer") {
 	BlInit(0, 0, 0);
-	REQUIRE(0 != BlAddTimer(3000, -2000, (BlTimerCallback)OnTimer, (void*)"Haha,Timer1", true));
-	REQUIRE(0 != BlAddTimer(4000, 2000, (BlTimerCallback)OnTimer, (void*)"Haha,Timer2", false));
-	uint64_t id3 = BlAddTimer(2000, 0, (BlTimerCallback)OnTimer, (void*)"Haha,Timer3", true);
+	REQUIRE(0 != BlAddTimer(3000, -2000, (BlTaskCallback)OnTimer, (void*)"Haha,Timer1", true));
+	REQUIRE(0 != BlAddTimer(4000, 2000, (BlTaskCallback)OnTimer, (void*)"Haha,Timer2", false));
+	uint64_t id3 = BlAddTimer(2000, 0, (BlTaskCallback)OnTimer, (void*)"Haha,Timer3", true);
 	REQUIRE(0 != id3);
 	std::this_thread::sleep_for(std::chrono::seconds(11));
-	int r = BlDelTimer(id3, (BlTimerCallback)OnTimerDeleted, (void*)"timer3");
+	int r = BlDelTimer(id3, (BlTaskCallback)OnTimerDeleted, (void*)"timer3");
 	std::cout << "BlDelTimer(id3) returns " << r << std::endl;
 	REQUIRE(r>=0);
 	std::this_thread::sleep_for(std::chrono::seconds(9));

@@ -374,7 +374,7 @@ INLINE void McoCutexLock(BlCutex* cutex) {
 */
 INLINE void McoSleep(uint32_t ms) {
 	if (ms > 0) {
-		BlAddOnceTimer(-((int64_t)ms), (BlTimerCallback)mco_resume, mco_running());
+		BlAddOnceTimer(-((int64_t)ms), (BlTaskCallback)mco_resume, mco_running());
 		mco_yield();
 	}
 }

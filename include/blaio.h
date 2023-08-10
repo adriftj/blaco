@@ -32,7 +32,6 @@ void BlExitNotify();
 */
 void BlWaitExited();
 
-extern bool g_exitApplication;
 extern size_t g_numCpus;
 
 /*
@@ -51,8 +50,6 @@ typedef void (*BlTaskCallback)(void* parm);
 */
 void BlPostTask(BlTaskCallback cb, void* parm, bool isIoTask);
 
-typedef void (*BlTimerCallback)(void* parm);
-
 /*
 * @brief Add a run only once timer
 * @param[in] startTime (unit:ms) >0-absolute time since Jan 1, 1970UTC, <=0-relate time to current
@@ -60,7 +57,7 @@ typedef void (*BlTimerCallback)(void* parm);
 * @param[in] parm
 * @return true-ok, false-failed(not call inside the thread loop)
 */
-bool BlAddOnceTimer(int64_t startTime, BlTimerCallback cb, void* parm);
+bool BlAddOnceTimer(int64_t startTime, BlTaskCallback cb, void* parm);
 
 /*
 * @brief Add a timer(periodic or run only once)
@@ -74,7 +71,7 @@ bool BlAddOnceTimer(int64_t startTime, BlTimerCallback cb, void* parm);
 *   @retval other id of the created periodic timer
 * @note run-once timer will be deleted automaticly after its callback return
 */
-uint64_t BlAddTimer(uint64_t period, int64_t startTime, BlTimerCallback cb, void* parm, bool isIoTask);
+uint64_t BlAddTimer(uint64_t period, int64_t startTime, BlTaskCallback cb, void* parm, bool isIoTask);
 
 /*
 * @brief Delete a timer
@@ -84,12 +81,12 @@ uint64_t BlAddTimer(uint64_t period, int64_t startTime, BlTimerCallback cb, void
 *              otherwise-will call cbDeleted(parm) after running callback returns
 * @param[in] parm valid only if cbDeleted!=NULL
 * @return
-*     @retval <0 timer with `id` doesn't exist
+*     @retval <0 timer faile(such as with `id` doesn't exist)
 *     @retvak 0 deleted(won't call cbDeleted)
-*     @retval 1 mark deleted but there is running callback(will call cbDeleted(parm))
+*     @retval 1 will be deleted in the future(will call `cbDeleted(parm)` then)
 * @note normally cbDeleted will be called in different thread
 */
-int BlDelTimer(int id, BlTimerCallback cbDeleted, void* parm);
+int BlDelTimer(uint64_t id, BlTaskCallback cbDeleted, void* parm);
 
 
 /*
@@ -135,6 +132,29 @@ bool BlSetEvent(BlEvent ev);
 *   @retval true ok
 */
 bool BlWaitEventForTime(BlEvent ev, uint32_t t);
+
+
+typedef struct tagBlFileContentWatcher BlFileContentWatcher;
+typedef void (*BlFileContentWatcherCallback)(void* parm);
+
+/*
+* @brief Open a file content watcher
+* @param[in] fileName name of the watched file
+* @param[in] delay the callback will be called after `delay` milliseconds,
+*                  for reducing the amount of events.
+* @param[in] cb the event callback
+* @param[in] parm will be passed to the event callback `cb`
+* @return NULL if failed(call BlGetLastError() for error code), otherwise ok
+*/
+BlFileContentWatcher* BlFileContentWatcherOpen(const char* dir,
+	int delayTime, BlFileContentWatcherCallback cb, void* parm);
+
+/*
+* @brief Close the filesystem event watcher
+* @param[in] watcher to close
+*/
+void BlFileContentWatcherClose(BlFileContentWatcher* watcher);
+
 
 /*
 * @brief Free memory

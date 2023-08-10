@@ -1,15 +1,14 @@
 #include <thread>
 #include <set>
+#include <unordered_map>
 #include <tuple>
 #include <queue>
 #include <chrono>
 #include <sys/resource.h>
 #include <signal.h>
+#include <semaphore.h>
 #include "blaio.h"
 #include "../../timer_priv.h"
-
-using Duration = std::chrono::milliseconds;
-using TimePoint = std::chrono::system_clock::time_point;
 
 static unsigned s_numSqeEntries = 4096; // default
 
@@ -44,16 +43,6 @@ struct _BlCancelIo_t {
 	int fd;
 };
 
-struct OnceTimer {
-	TimePoint startTime;
-	BlTimerCallback cb;
-	void* parm;
-
-	bool operator <(const OnceTimer& other) const {
-		return startTime > other.startTime;
-	}
-};
-
 struct Worker {
 	size_t slot;
 	io_uring ring;
@@ -66,16 +55,19 @@ struct Worker {
 	size_t numFreeCancels;
 	_BlCancelIo_t* firstFreeCancel; // use _BlCancel_t.base.next as next link
 	std::thread thread;
-	std::priority_queue<OnceTimer> onceTimers;
+	std::priority_queue<BTimer> timerQ;
+	std::unordered_map<uint64_t, TimerInfo*> timers;
+	uint64_t nextTimerId;
 
 	Worker() : waitSqeHead(nullptr), waitSqeTail(nullptr), numFreeTasks(0),
 		firstFreeTask(nullptr), numFreeCancels(0), firstFreeCancel(nullptr) {}
 };
 
-Worker* s_workers = nullptr;
-size_t g_numIoWorkers = 0;
-size_t g_numOtherWorkers = 0;
-BL_THREAD_LOCAL Worker* gt_worker = nullptr;
+static size_t s_numIoWorkers = 0;
+static bool s_initSemaHasInitialized = false;
+static sem_t s_initSema;
+static size_t s_nextIoWorker = 0;
+static size_t s_nextOtherWorker = 0;
 
 static void SetLimits() {
 	struct rlimit rl;
@@ -90,7 +82,7 @@ static void _BlOnSqePostTask(_BlPostTask_t* io, struct io_uring_sqe* sqe) {
 }
 
 static void OnPostTaskCompleted(_BlPostTask_t* io) {
-	Worker* worker = gt_worker;
+	Worker* worker = st_worker;
 	assert(worker);
 	if (worker->numFreeTasks >= 1024)
 		free(io);
@@ -110,7 +102,7 @@ inline void _BlInitPostTask(_BlPostTask_t* io, size_t slot, BlTaskCallback cb, v
 }
 
 static void _BlOnSqeRecvTask(_BlRecvTask_t* io, struct io_uring_sqe* sqe) {
-	io_uring_prep_read(sqe, gt_worker->fdPipe[0], io->tasks, sizeof(io->tasks), 0);
+	io_uring_prep_read(sqe, st_worker->fdPipe[0], io->tasks, sizeof(io->tasks), 0);
 	io_uring_sqe_set_data(sqe, io);
 }
 
@@ -139,7 +131,7 @@ static void _BlOnSqeCancelIo(_BlCancelIo_t* io, struct io_uring_sqe* sqe) {
 }
 
 static void OnCancelIoCompleted(_BlCancelIo_t* io) {
-	Worker* worker = gt_worker;
+	Worker* worker = st_worker;
 	assert(worker);
 	if (worker->numFreeCancels >= 1024)
 		free(io);
@@ -158,6 +150,7 @@ inline void _BlInitCancelIo(_BlCancelIo_t* io, int fd) {
 
 static void InitWorker(Worker& worker, size_t slot) {
 	worker.slot = slot;
+	worker.nextTimerId = 0;
 	int r = io_uring_queue_init(s_numSqeEntries, &worker.ring, 0);
 	if (r < 0)
 		FATAL_ERR("io_uring_queue_init failed");
@@ -166,35 +159,12 @@ static void InitWorker(Worker& worker, size_t slot) {
 		FATAL_ERR("Can't create pipe fds for worker");
 }
 
-inline int64_t GetCqeTimeOut(std::priority_queue<OnceTimer>* onceTimers) {
-	if (onceTimers->empty())
-		return INFINITE;
-	TimePoint tNow = std::chrono::system_clock::now();
-	int64_t toWait;
-	for (;;) {
-		const OnceTimer& timer = onceTimers->top();
-		toWait = std::chrono::duration_cast<Duration>(timer.startTime - tNow).count();
-		if (toWait > 0)
-			break;
-		BlTimerCallback cb = timer.cb;
-		void* parm = timer.parm;
-		onceTimers->pop();
-		if (cb)
-			cb(parm);
-		if (onceTimers->empty())
-			return INFINITE;
-	}
-	if (toWait >= INFINITE)
-		toWait = INFINITE - 1;
-	return toWait;
-}
-
-static void SubmitAndWaitCqe(struct io_uring* ring, struct io_uring_cqe** pCqe, std::priority_queue<OnceTimer>* onceTimers) {
+static void SubmitAndWaitCqe(struct io_uring* ring, struct io_uring_cqe** pCqe, std::priority_queue<BTimer>* timerQ) {
 	int r;
 	int64_t toWait;
 	struct __kernel_timespec ts;
 	for (;;) {
-		toWait = GetCqeTimeOut(onceTimers);
+		toWait = GetWaitTime(timerQ);
 		io_uring_submit(ring);
 		if (toWait >= INFINITE)
 			r = io_uring_wait_cqe(ring, pCqe);
@@ -230,16 +200,17 @@ static void _BlIoLoop(size_t slot) {
 	Worker* worker = s_workers + slot;
 	struct io_uring* ring = &worker->ring;
 	struct io_uring_cqe* cqe;
-	auto* onceTimers = &worker->onceTimers;
+	auto* timerQ = &worker->timerQ;
 	_BlAioBase* lazyio;
 	bool hasRecvTask;
 	int r;
 
-	gt_worker = worker;
+	st_worker = worker;
 	_BlInitRecvTask(&worker->ioRecvTask);
 	_BlDoAio((_BlAioBase*)&worker->ioRecvTask);
+	sem_post(&s_initSema);
 	for (;;) {
-		SubmitAndWaitCqe(ring, &cqe, onceTimers);
+		SubmitAndWaitCqe(ring, &cqe, timerQ);
 		hasRecvTask = false;
 		for (;;) {
 			lazyio = (_BlAioBase*)io_uring_cqe_get_data(cqe);
@@ -252,7 +223,7 @@ static void _BlIoLoop(size_t slot) {
 			if (r < 0)
 				break;
 		}
-		if (g_exitApplication)
+		if (s_exitApplication)
 			break;
 		if (hasRecvTask)
 			_BlDoAio((_BlAioBase*)&worker->ioRecvTask);
@@ -269,15 +240,11 @@ static void _BlIoLoop(size_t slot) {
 		worker->firstFreeCancel = (_BlCancelIo_t*)p->base.next;
 		free(p);
 	}
-	gt_worker = nullptr;
-}
-
-void BlIoLoop() {
-	_BlIoLoop(0);
+	st_worker = nullptr;
 }
 
 static void CheckWaitSqeAio() {
-	Worker* worker = (Worker*)gt_worker;
+	Worker* worker = (Worker*)st_worker;
 	assert(worker);
 	_BlAioBase* head;
 	struct io_uring* ring = &worker->ring;
@@ -305,9 +272,14 @@ void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers) {
 		numIoWorkers = g_numCpus;
 	if (numOtherWorkers == 0)
 		numOtherWorkers = 2*g_numCpus;
-	g_numIoWorkers = numIoWorkers;
-	g_numOtherWorkers = numOtherWorkers;
+	s_numIoWorkers = numIoWorkers;
 	size_t numWorkers = numIoWorkers + numOtherWorkers;
+	s_numWorkers = numWorkers;
+	if (!s_initSemaHasInitialized) {
+		s_initSemaHasInitialized = true;
+		if (sem_init(&s_initSema, 0, 0) != 0)
+			FATAL_ERR("sem_init failed");
+	}
 	s_workers = new Worker[numWorkers];
 	bool useMain = (options & BL_INIT_USE_MAIN_THREAD_AS_WORKER);
 	for (size_t i = 0; i < numWorkers; ++i) {
@@ -315,34 +287,33 @@ void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers) {
 		if (!useMain || i > 0)
 			s_workers[i].thread = std::thread([i]() { _BlIoLoop(i); });
 	}
-	_BlInitTimerLoop();
+	for (size_t i = 0; i < numWorkers; ++i)
+		sem_wait(&s_initSema);
 }
-
-static size_t s_nextIoWorker = 0;
-static size_t s_nextOtherWorker = 0;
 
 inline size_t PickupWorker(bool isIoTask) {
 	size_t x;
 	if (isIoTask) {
 		x = s_nextIoWorker++;
-		if (s_nextIoWorker >= g_numIoWorkers)
+		if (s_nextIoWorker >= s_numIoWorkers)
 			s_nextIoWorker = 0;
-		if (x >= g_numIoWorkers)
+		if (x >= s_numIoWorkers)
 			x = 0;
 	}
 	else {
+		size_t numOtherWorkers = s_numWorkers - s_numIoWorkers;
 		x = s_nextOtherWorker++;
-		if (s_nextOtherWorker >= g_numOtherWorkers)
+		if (s_nextOtherWorker >= numOtherWorkers)
 			s_nextOtherWorker = 0;
-		if (x >= g_numOtherWorkers)
+		if (x >= numOtherWorkers)
 			x = 0;
-		x += g_numIoWorkers;
+		x += s_numIoWorkers;
 	}
 	return x;
 }
 
-static void _PostTask(size_t slot, BlTaskCallback cb, void* parm) {
-	Worker* worker = gt_worker;
+static bool _BlPostTaskToWorker(size_t slot, BlTaskCallback cb, void* parm) {
+	Worker* worker = st_worker;
 	if (worker) { // inside _BlIoLoop(thread pool)
 		_BlPostTask_t* ioTask = worker->firstFreeTask;
 		if (ioTask) {
@@ -357,7 +328,7 @@ static void _PostTask(size_t slot, BlTaskCallback cb, void* parm) {
 			if (!ioTask) {
 				assert(false);
 				// TODO: add log
-				return;
+				return false;
 			}
 			_BlInitPostTask(ioTask, slot, cb, parm);
 		}
@@ -372,13 +343,28 @@ static void _PostTask(size_t slot, BlTaskCallback cb, void* parm) {
 		if (r < 0) {
 			// TODO: add log
 			fprintf(stderr, "write pipe failed, err=%d\n", errno);
+			return false;
 		}
 	}
+	return true;
 }
 
 void BlPostTask(BlTaskCallback cb, void* parm, bool isIoTask) {
 	size_t slot = PickupWorker(isIoTask);
-	_PostTask(slot, cb, parm);
+	_BlPostTaskToWorker(slot, cb, parm);
+}
+
+#include "../../blaco_priv.h"
+
+void BlExitNotify() {
+	s_exitApplication = true;
+	for (size_t i = 0; i < s_numWorkers; ++i)
+		_BlPostTaskToWorker(i, nullptr, nullptr);
+}
+
+void BlWaitExited() {
+	_BlWaitExited();
+	s_numIoWorkers = 0;
 }
 
 inline void CancelIoInWorker(Worker* worker, int fd) {
@@ -402,12 +388,12 @@ inline void CancelIoInWorker(Worker* worker, int fd) {
 }
 
 static void OnCancelIoPosted(void* parm) {
-	//CancelIoInWorker(gt_worker, (int)parm);
+	//CancelIoInWorker(st_worker, (int)parm);
 }
 
 int BlCancelIo(int fd) {
 	assert(false); // need io_uring/linux kernel new version
-	Worker* worker = gt_worker;
+	Worker* worker = st_worker;
 	if (worker) // inside _BlIoLoop(thread pool)
 		CancelIoInWorker(worker, fd);
 	else {
@@ -424,26 +410,8 @@ int BlCancelIo(int fd) {
 	return 0;
 }
 
-void BlExitNotify() {
-	g_exitApplication = true;
-	for (size_t i = 0; i < g_numIoWorkers + g_numOtherWorkers; ++i)
-		_PostTask(i, nullptr, nullptr);
-	_BlExitNotifyTimerLoop();
-}
-
-void BlWaitExited() {
-	_BlWaitTimerLoopExited();
-	for (size_t i = 0; i < g_numIoWorkers + g_numOtherWorkers; ++i) {
-		if (s_workers[i].thread.get_id() != std::thread::id())
-			s_workers[i].thread.join();
-	}
-	delete[] s_workers;
-	s_workers = nullptr;
-	g_exitApplication = false;
-}
-
 bool _BlDoAio(_BlAioBase* io) {
-	Worker* worker = (Worker*)gt_worker;
+	Worker* worker = (Worker*)st_worker;
 	if (!worker) {
 		io->ret = -ENOTSUP;
 		// TODO: add log
@@ -637,14 +605,4 @@ void _BlOnSqeFileWrite(BlFileWrite_t* io, struct io_uring_sqe* sqe) {
 void _BlOnSqeFileWriteVec(BlFileWriteVec_t* io, struct io_uring_sqe* sqe) {
 	io_uring_prep_writev(sqe, io->f, io->bufs, io->bufCnt, io->offset);
 	io_uring_sqe_set_data(sqe, io);
-}
-
-bool BlAddOnceTimer(int64_t startTime, BlTimerCallback cb, void* parm) {
-	Worker* worker = (Worker*)gt_worker;
-	if (!worker)
-		return false;
-	TimePoint tNow = std::chrono::system_clock::now();
-	TimePoint t = startTime <= 0 ? tNow + Duration(-startTime) : TimePoint() + Duration(startTime);
-	worker->onceTimers.emplace(OnceTimer{ t, cb, parm });
-	return true;
 }

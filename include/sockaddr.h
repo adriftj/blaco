@@ -1,11 +1,12 @@
 #pragma once
 
+#include <stdio.h>
+#include <stdint.h>
 #include "blconfig.h"
 
 #ifdef __cplusplus
 extern "C" {
 #else
-#include <stdint.h>
 #include <stdbool.h>
 #endif
 

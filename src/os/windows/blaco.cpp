@@ -1,9 +1,9 @@
 #include <thread>
 #include <set>
+#include <unordered_map>
 #include <tuple>
 #include <queue>
 #include "blaio.h"
-#include "../../timer_priv.h"
 
 HANDLE g_hIocp = NULL;
 LPFN_ACCEPTEX g_AcceptEx = NULL;
@@ -79,74 +79,49 @@ static void EnumWsaProtocols() {
 	}
 }
 
-using Duration = std::chrono::milliseconds;
-using TimePoint = std::chrono::system_clock::time_point;
-
-struct OnceTimer {
-	TimePoint startTime;
-	BlTimerCallback cb;
-	void* parm;
-
-	bool operator <(const OnceTimer& other) const {
-		return startTime > other.startTime;
-	}
-};
+#include "../../timer_priv.h"
 
 struct Worker {
 	size_t slot;
+	uint64_t nextTimerId;
 	std::thread thread;
-	std::priority_queue<OnceTimer> onceTimers;
+	std::priority_queue<BTimer> timerQ;
+	std::unordered_map<uint64_t, TimerInfo*> timers;
 };
-size_t s_numWorkers = 0;
-static Worker* s_workers = nullptr;
-BL_THREAD_LOCAL Worker* gt_worker = nullptr;
 
-
-inline DWORD GetIocpTimeOut(std::priority_queue<OnceTimer>* onceTimers) {
-	if (onceTimers->empty())
-		return INFINITE;
-	TimePoint tNow = std::chrono::system_clock::now();
-	int64_t toWait;
-	for (;;) {
-		const OnceTimer& timer = onceTimers->top();
-		toWait = std::chrono::duration_cast<Duration>(timer.startTime - tNow).count();
-		if (toWait > 0)
-			break;
-		BlTimerCallback cb = timer.cb;
-		void* parm = timer.parm;
-		onceTimers->pop();
-		if (cb)
-			cb(parm);
-		if (onceTimers->empty())
-			return INFINITE;
-	}
-	if (toWait >= INFINITE)
-		return INFINITE - 1;
-	return (DWORD)toWait;
-}
+static HANDLE s_initSema = NULL;
+static size_t s_nextWorker = 0;
 
 void _BlIoLoop(size_t slot) {
 	Worker* worker = s_workers + slot;
-	gt_worker = worker;
+	st_worker = worker;
 	DWORD toWait;
 	int err;
 	DWORD bytesXfer;
 	ULONG_PTR perHandle;
 	_BlAioBase* lazyio;
+	OVERLAPPED_ENTRY ovEntry;
+	ULONG nEntries = 0;
+	ReleaseSemaphore(s_initSema, 1, NULL);
 	for (;;) {
 		lazyio = nullptr;
 		err = 0;
-		toWait = GetIocpTimeOut(&worker->onceTimers);
-		if (!::GetQueuedCompletionStatus(g_hIocp, &bytesXfer, &perHandle, (LPOVERLAPPED*)&lazyio, toWait)) {
+		toWait = GetWaitTime(&worker->timerQ);
+		if (!::GetQueuedCompletionStatusEx(g_hIocp, &ovEntry, 1, &nEntries, toWait, TRUE)) {
 			err = GetLastError();
 			if (err == ERROR_SEM_TIMEOUT || err == WAIT_TIMEOUT)
 				continue;
-			if (!lazyio) {
-				if (err == ERROR_ABANDONED_WAIT_0) // iocp handle is closed
-					return;
+			if (err == ERROR_ABANDONED_WAIT_0 || err == ERROR_INVALID_HANDLE) // iocp handle is closed
+				return;
+			if (nEntries == 1 && !ovEntry.lpOverlapped) {
 				return; // TODO: other reason?
 			}
 		}
+		if (nEntries < 1)
+			continue;
+		bytesXfer = ovEntry.dwNumberOfBytesTransferred;
+		perHandle = ovEntry.lpCompletionKey;
+		lazyio = (_BlAioBase*)ovEntry.lpOverlapped;
 
 		if (perHandle == BL_kSocket)
 			lazyio->internalOnCompleted(lazyio, err, bytesXfer);
@@ -181,10 +156,6 @@ SOCKET BlSockCreate(sa_family_t family, int sockType, int protocol) {
 	return sock;
 }
 
-void BlIoLoop() {
-	_BlIoLoop(0);
-}
-
 void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers) {
 	if (!(options & BL_INIT_DONT_WSASTARTUP)) {
 		WSADATA wsadata;
@@ -203,41 +174,47 @@ void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers) {
 		numOtherWorkers = g_numCpus;
 	size_t numWorkers = numIoWorkers + numOtherWorkers;
 	s_numWorkers = numWorkers;
+	s_initSema = CreateSemaphore(NULL, 0, s_numWorkers, NULL);
+	if (s_initSema == NULL)
+		FATAL_ERR("Can not create init sema");
 	s_workers = new Worker[numWorkers];
 	bool useMain = (options & BL_INIT_USE_MAIN_THREAD_AS_WORKER);
 	for (size_t i = 0; i < numWorkers; ++i) {
 		s_workers[i].slot = i;
+		s_workers[i].nextTimerId = 0;
 		if (!useMain || i > 0)
 			s_workers[i].thread = std::thread([i]() { _BlIoLoop(i); });
 	}
-	_BlInitTimerLoop();
+	for(size_t i = 0; i<numWorkers; ++i)
+		WaitForSingleObject(s_initSema, INFINITE);
 }
 
+bool _BlPostTaskToWorker(size_t slot, BlTaskCallback cb, void* parm) {
+	if (slot >= s_numWorkers)
+		return false;
+	DWORD r = QueueUserAPC((PAPCFUNC)cb, s_workers[slot].thread.native_handle(), (ULONG_PTR)parm);
+	return r != 0;
+}
+
+inline size_t PickupWorker(bool /*isIoTask*/) {
+	size_t x = s_nextWorker++;
+	if (s_nextWorker >= s_numWorkers)
+		s_nextWorker = 0;
+	if (x >= s_numWorkers)
+		x = 0;
+	return x;
+}
+
+#include "../../blaco_priv.h"
+
 void BlExitNotify() {
-	g_exitApplication = true;
-	_BlExitNotifyTimerLoop();
+	s_exitApplication = true;
 	CloseHandle(g_hIocp);
 }
 
 void BlWaitExited() {
-	_BlWaitTimerLoopExited();
-	for (size_t i = 0; i < s_numWorkers; ++i) {
-		if (s_workers[i].thread.get_id() != std::thread::id())
-			s_workers[i].thread.join();
-	}
-	delete[] s_workers;
-	s_workers = nullptr;
-	g_exitApplication = false;
-}
-
-bool BlAddOnceTimer(int64_t startTime, BlTimerCallback cb, void* parm) {
-	Worker* worker = (Worker*)gt_worker;
-	if (!worker)
-		return false;
-	TimePoint tNow = std::chrono::system_clock::now();
-	TimePoint t = startTime <= 0 ? tNow + Duration(-startTime) : TimePoint() + Duration(startTime);
-	worker->onceTimers.emplace(OnceTimer{ t, cb, parm });
-	return true;
+	_BlWaitExited();
+	g_hIocp = NULL;
 }
 
 int BlFileOpen(const char* fileName, int flags, int mode) {
