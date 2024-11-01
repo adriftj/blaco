@@ -786,6 +786,62 @@ static const int
 	BLFILE_O_SYMLINK      = 0,
 	BLFILE_O_SYNC         = 0x08000000; /* FILE_FLAG_WRITE_THROUGH */
 
+INLINE WCHAR* _BlUtf8ToWCHAR(const char* s, int n, int* pwn) {
+	if (n < 0)
+		n = strlen(s) + 1;
+	int wn = 2 * n;
+	WCHAR* ws = (WCHAR*)malloc(wn);
+	if (!ws)
+		return NULL;
+	n = MultiByteToWideChar(CP_UTF8, 0, s, n, ws, wn);
+	if (n <= 0) {
+		free(ws);
+		return NULL;
+	}
+	if(pwn)
+		*pwn = n;
+	return ws;
+}
+
+INLINE WCHAR* _BlUtf8PathToWCHAR(const char* s, int n, int* pwn) {
+	int wn;
+	WCHAR* ws = _BlUtf8ToWCHAR(s, n, &wn);
+	if (!ws)
+		return NULL;
+	for (int i = 0; i < wn; ++i) { // replace all unix path splitor to windows path splitor
+		if (ws[i] == L'/')
+			ws[i] = L'\\';
+	}
+	if (pwn)
+		*pwn = wn;
+	return ws;
+}
+
+INLINE HANDLE _BlCreateFileUtf8(
+	_In_ const char* fileName, /* utf8 */
+	_In_ DWORD dwDesiredAccess,
+	_In_ DWORD dwShareMode,
+	_In_opt_ LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+	_In_ DWORD dwCreationDisposition,
+	_In_ DWORD dwFlagsAndAttributes,
+	_In_opt_ HANDLE hTemplateFile
+) {
+	WCHAR* pathw = _BlUtf8PathToWCHAR(fileName, -1, NULL);
+	if (!pathw) {
+		SetLastError(ERROR_INVALID_PARAMETER);
+		return INVALID_HANDLE_VALUE;
+	}
+	HANDLE file = CreateFileW(pathw,
+		dwDesiredAccess,
+		dwShareMode,
+		lpSecurityAttributes,
+		dwCreationDisposition,
+		dwFlagsAndAttributes,
+		hTemplateFile);
+	free(pathw);
+	return file;
+}
+
 INLINE int BlFileClose(int f) {
 #pragma warning(push)
 #pragma warning(disable: 4312)
@@ -901,12 +957,12 @@ INLINE void BlInitFileWrite(BlFileWrite_t* io, int f, uint64_t offset,
 	io->bufLen = len;
 }
 
-#pragma warning(push)
-#pragma warning(disable: 4312)
-
 INLINE bool BlDoFileWrite(BlFileWrite_t* io) {
 	DWORD nXfer;
+#pragma warning(push)
+#pragma warning(disable: 4312)
 	bool b = WriteFile((HANDLE)io->f, io->buf, io->bufLen, &nXfer, &io->base.ov);
+#pragma warning(pop)
 	return _BlProcessRetXferSize(b, &io->base.ret, nXfer);
 }
 
@@ -976,12 +1032,13 @@ INLINE bool BlDoFileWriteVec(BlFileWriteVec_t* io) {
 }
 
 INLINE int BlCancelIo(int fd) {
+#pragma warning(push)
+#pragma warning(disable: 4312)
 	if(CancelIo((HANDLE)fd))
+#pragma warning(pop)
 		return 0;
 	return -GetLastError();
 }
-
-#pragma warning(pop)
 
 #ifdef __cplusplus
 }

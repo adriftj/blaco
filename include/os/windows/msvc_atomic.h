@@ -124,3 +124,19 @@ INLINE void BlStorePtr(void * volatile *a, void *v) {
     BlMemoryBarrier();
     *a = v;
 }
+
+INLINE int32_t BlAtomicInc32(int32_t volatile* a) {
+    return InterlockedIncrement((DWORD volatile*)a);
+}
+
+INLINE int32_t BlAtomicDec32(int32_t volatile* a) {
+    return InterlockedDecrement((DWORD volatile*)a);
+}
+
+INLINE int64_t BlAtomicInc64(int64_t volatile* a) {
+    return InterlockedIncrement64(a);
+}
+
+INLINE int64_t BlAtomicDec64(int64_t volatile* a) {
+    return InterlockedDecrement64(a);
+}

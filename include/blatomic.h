@@ -156,6 +156,8 @@ builtins if available.
     #define BlFasInt BlFas64
     #define BlFetchAdd BlFetchAdd64
     #define BlAddFetch BlAddFetch64
+    #define BlAtomicInc BlAtomicInc64
+    #define BlAtomicDec BlAtomicDec64
 #else
     #define BlLoadInt BlLoad32
     #define BlStoreInt BlStore32
@@ -163,6 +165,8 @@ builtins if available.
     #define BlFasInt BlFas32
     #define BlFetchAdd BlFetchAdd32
     #define BlAddFetch BlAddFetch32
+    #define BlAtomicInc BlAtomicInc32
+    #define BlAtomicDec BlAtomicDec32
 #endif
 
 #ifdef __cplusplus

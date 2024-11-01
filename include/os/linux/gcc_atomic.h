@@ -81,3 +81,19 @@ INLINE void* BlCasPtrV(void* volatile* a, void* cmp, void* set) {
 }
 
 #define BlMemoryBarrier __sync_synchronize
+
+INLINE int32_t BlAtomicInc32(int32_t volatile* a) {
+    return BlAddFetch32(a, 1);
+}
+
+INLINE int32_t BlAtomicDec32(int32_t volatile* a) {
+    return BlAddFetch32(a, -1);
+}
+
+INLINE int64_t BlAtomicInc64(int64_t volatile* a) {
+    return BlAddFetch64(a, 1);
+}
+
+INLINE int64_t BlAtomicDec64(int64_t volatile* a) {
+    return BlAddFetch64(a, -1);
+}

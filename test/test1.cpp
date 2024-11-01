@@ -193,7 +193,7 @@ TEST_CASE("test co_await coroutine") {
 }
 
 bl::task<void> udp_receiver() {
-	SOCKET sockR = BlUdpNewPeerReceiver(bl::SockAddr(43217));
+	SOCKET sockR = BlUdpNewPeerReceiver(bl::SockAddr(43217), true);
 	REQUIRE(sockR != INVALID_SOCKET);
 	char buf[128];
 	size_t n = sizeof(buf);
@@ -238,7 +238,7 @@ TEST_CASE("test udp 1") {
 }
 
 bl::task<void> udp_receiver2() {
-	SOCKET sockR = BlUdpNewPeerReceiver(bl::SockAddr(43217));
+	SOCKET sockR = BlUdpNewPeerReceiver(bl::SockAddr(43217), true);
 	REQUIRE(sockR != INVALID_SOCKET);
 	char buf[128];
 	bl::SockAddr addr(0, true);
@@ -322,6 +322,52 @@ TEST_CASE("test multicast address") {
 	std::cout << "Tested ok is_multicast()" << std::endl;
 }
 
+bl::task<void> udp_receiver3() {
+	SOCKET sockR = BlUdpNewPeerReceiverEx(bl::SockAddr("224.34.129.38", 43217), nullptr, true);
+	REQUIRE(sockR != INVALID_SOCKET);
+	char buf[128];
+	size_t n = sizeof(buf);
+	bl::SockAddr addr(0, true);
+	auto nRecv = co_await bl::SockRecvFrom(sockR, addr, buf, n);
+	REQUIRE(nRecv > 0);
+	std::cout << "Udp_receiver3: received " << nRecv << " bytes from " << addr.to_str() << std::endl;
+	auto nSend = co_await bl::SockSendTo(sockR, addr, buf, nRecv);
+	REQUIRE(nSend >= 0);
+	REQUIRE(nSend == nRecv);
+	REQUIRE(0 == BlSockClose(sockR));
+	std::cout << "socket closed ok." << std::endl;
+}
+
+bl::task<void> udp_sender3() {
+	SOCKET sockS = BlUdpNewPeerSenderEx(bl::SockAddr("224.34.129.38", 43217), nullptr, 128, 1);
+	REQUIRE(sockS != INVALID_SOCKET);
+	char buf[128] = "Haha, this is sender speak!";
+	size_t n = strlen(buf);
+	//int rev = BlSockPoll(sockS, POLLWRNORM, 0);
+	//REQUIRE(rev == POLLWRNORM);
+	auto nSend = co_await bl::SockSend(sockS, buf, n);
+	REQUIRE(nSend == n);
+	char buf2[128];
+	size_t n2 = sizeof(buf2);
+	co_await bl::CoSleep(100);
+	int rev = BlSockPoll(sockS, POLLRDNORM, 0);
+	REQUIRE((rev & (POLLERR | POLLRDNORM)) != 0);
+	auto nRecv = co_await bl::SockRecv(sockS, buf2, n2);
+	REQUIRE(nRecv == n);
+	REQUIRE(memcmp(buf, buf2, n) == 0);
+	REQUIRE(0 == BlSockClose(sockS));
+	std::cout << "Udp_sender3: received same content I have sent." << std::endl;
+}
+
+TEST_CASE("+test udp 3") {
+	BlInit(0, 0, 0);
+	bl::go(udp_receiver3().get_handle());
+	bl::go(udp_sender3().get_handle());
+	std::this_thread::sleep_for(std::chrono::seconds(1));
+	BlExitNotify();
+	BlWaitExited();
+}
+
 void OnTimer(const char* s) {
 	time_t t = time(nullptr);
 	tm* tm = gmtime(&t);
@@ -336,7 +382,7 @@ void OnTimerDeleted(const char* s) {
 		<< ":" << tm->tm_min << ":" << tm->tm_sec << std::endl;
 }
 
-TEST_CASE("est timer") {
+TEST_CASE("test timer") {
 	BlInit(0, 0, 0);
 	REQUIRE(0 != BlAddTimer(3000, -2000, (BlTaskCallback)OnTimer, (void*)"Haha,Timer1", true));
 	REQUIRE(0 != BlAddTimer(4000, 2000, (BlTaskCallback)OnTimer, (void*)"Haha,Timer2", false));

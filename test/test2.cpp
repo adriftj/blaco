@@ -212,7 +212,7 @@ static void CoEchoClient(mco_coro* coro) {
 	McoTcpClose(sock);
 }
 
-static void echoclient(sa_family_t family, int i) {
+static mco_coro* echoclient(sa_family_t family, int i) {
 	mco_desc desc = mco_desc_init(CoEchoClient, 0);
 	mco_coro* coro;
 	mco_result r = mco_create(&coro, &desc);
@@ -221,15 +221,19 @@ static void echoclient(sa_family_t family, int i) {
 	parm->family = family;
 	parm->i = i;
 	McoSchedule(coro, true);
+	return coro;
 }
 
 TEST_CASE("test mco echo server ipv4") {
 	BlInit(0, 0, 0);
 	SOCKET sockListen = echoserver(AF_INET, 2);
+	mco_coro* coros[2];
 	for (int i = 0; i < 2; ++i)
-		echoclient(AF_INET, i);
+		coros[i] = echoclient(AF_INET, i);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 	//REQUIRE(BlCancelIo(sockListen) == 0);
+	for (int i = 0; i < 2; ++i)
+		mco_destroy(coros[i]);
 	BlExitNotify();
 	BlWaitExited();
 	BlSockClose(sockListen);
@@ -238,10 +242,13 @@ TEST_CASE("test mco echo server ipv4") {
 TEST_CASE("test mco echo server ipv6") {
 	BlInit(0, 0, 0);
 	SOCKET sockListen = echoserver(AF_INET6, 2);
+	mco_coro* coros[2];
 	for (int i = 0; i < 2; ++i)
-		echoclient(AF_INET6, i);
+		coros[i] = echoclient(AF_INET6, i);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 	//REQUIRE(BlCancelIo(sockListen) == 0);
+	for (int i = 0; i < 2; ++i)
+		mco_destroy(coros[i]);
 	BlExitNotify();
 	BlWaitExited();
 	BlSockClose(sockListen);
@@ -250,10 +257,13 @@ TEST_CASE("test mco echo server ipv6") {
 TEST_CASE("test mco echo server unix domain socket") {
 	BlInit(0, 0, 0);
 	SOCKET sockListen = echoserver(AF_UNIX, 2);
+	mco_coro* coros[2];
 	for (int i = 0; i < 2; ++i)
-		echoclient(AF_UNIX, i);
+		coros[i] = echoclient(AF_UNIX, i);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 	//REQUIRE(BlCancelIo(sockListen) == 0);
+	for (int i = 0; i < 2; ++i)
+		mco_destroy(coros[i]);
 	BlExitNotify();
 	BlWaitExited();
 	BlSockClose(sockListen);
@@ -262,7 +272,7 @@ TEST_CASE("test mco echo server unix domain socket") {
 static void udp_receiver(mco_coro*) {
 	BlSockAddr addr;
 	BlGenSockAddrPort(43217, false, &addr.sa);
-	SOCKET sockR = BlUdpNewPeerReceiver(&addr.sa);
+	SOCKET sockR = BlUdpNewPeerReceiver(&addr.sa, true);
 	REQUIRE(sockR != INVALID_SOCKET);
 	char buf[128];
 	size_t n = sizeof(buf);
@@ -324,7 +334,7 @@ TEST_CASE("test mco udp 1") {
 static void udp_receiver2(mco_coro*) {
 	BlSockAddr addr;
 	BlGenSockAddrPort(43217, false, &addr.sa);
-	SOCKET sockR = BlUdpNewPeerReceiver(&addr.sa);
+	SOCKET sockR = BlUdpNewPeerReceiver(&addr.sa, true);
 	REQUIRE(sockR != INVALID_SOCKET);
 	char buf[128];
 	iovec bufs[2] = { { buf, 16 }, { buf + 32, sizeof(buf) - 32 } };
@@ -411,7 +421,7 @@ TEST_CASE("test mco udp 2") {
 	BlWaitExited();
 }
 
-static const char* fName = ".\\aaaabbbb.txt";
+static const char* fName = "./aaaabbbb.txt";
 static const char* str2 = "Writing some mco data";
 static const uint32_t str2len = strlen(str2);
 static const char* str3 = " some mco HaloKittyTulip flo";

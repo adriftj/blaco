@@ -178,6 +178,23 @@ The following can be defined to change the library behavior:
 - `MCO_NO_DEFAULT_ALLOCATORS` - Disable the default allocator using `MCO_MALLOC` and `MCO_FREE`.
 - `MCO_USE_VALGRIND`          - Define if you want run with valgrind to fix accessing memory errors.
 
+# Note on multithreading asynchonized I/O
+
+In MT(multithreading) aynchronized I/O like Windows IOCP environment, one thread emit async I/O then
+call mco_yield_mt, another thread will call mco_resume_mt after I/O completed, as following:
+        Thread 1                  |         Thread 2
+          ...                     |           ...
+       coro = mco_running();      |
+       start_async_io(IO, coro);  |
+                                  |    {IO, coro} = received_aync_io_completed_event();
+       mco_yield_mt(); // A       |    mco_resume_mt(coro); // B
+         ...                      |           ...
+Then, a race condition will take place. if A is executed earlier than B, there isn't any problem, `coro`
+is be yield then be resumed normally. But if B is executed earlier than A, if mco_yield_mt and mco_resume_mt
+do anything same as mco_yield and mco_resume, `coro` will be resumed first, BUT it's is running now and no
+saved context for resuming! But don't worry, mco_yield_mt and mco_resume_mt DOES notice this race condition and
+handle it appropriately.
+
 # License
 
 Your choice of either Public Domain or MIT No Attribution, see end of file.

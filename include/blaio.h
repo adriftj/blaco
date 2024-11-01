@@ -12,15 +12,13 @@ extern "C" {
 * @brief Initialize coroutine I/O environment(thread pools, ...)
 * @param options bit-ORs of:
 *        BL_INIT_USE_MAIN_THREAD_AS_WORKER the calling thread will act as a worker
-*        BL_INIT_DONT_WSASTARTUP call WSAStartup(only used in Windows)
 * @param numIoWorkers 0-use default(normally 1*num of cpus), otherwise the number of io workers
 * @param numOtherWorkers 0-use default, otherwise
 * @note if options&BL_INIT_USE_MAIN_THREAD_AS_WORKER, you should call BlIoLoop() later in main thread.
 */
 void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers);
 static const uint32_t
-	BL_INIT_USE_MAIN_THREAD_AS_WORKER = 0x01,
-	BL_INIT_DONT_WSASTARTUP           = 0x02;
+	BL_INIT_USE_MAIN_THREAD_AS_WORKER = 0x01;
 
 /*
 * @brief Notify will exit
@@ -81,13 +79,27 @@ uint64_t BlAddTimer(uint64_t period, int64_t startTime, BlTaskCallback cb, void*
 *              otherwise-will call cbDeleted(parm) after running callback returns
 * @param[in] parm valid only if cbDeleted!=NULL
 * @return
-*     @retval <0 timer faile(such as with `id` doesn't exist)
+*     @retval <0 failed(such as with `id` doesn't exist)
 *     @retvak 0 deleted(won't call cbDeleted)
 *     @retval 1 will be deleted in the future(will call `cbDeleted(parm)` then)
 * @note normally cbDeleted will be called in different thread
 */
 int BlDelTimer(uint64_t id, BlTaskCallback cbDeleted, void* parm);
 
+/*
+* @brief Change a timer
+* @param[in] in period 0-run only once, >0-the period
+* @param[in] startTime (unit:ms) >0-absolute time since Jan 1, 1970UTC, <=0-relate time to current
+* @param[in] cbChanged
+*              NULL-no action,
+*              otherwise-will call cbChanged(parm) after running callback returns
+* @param[in] parm valid only if cbChanged!=NULL
+* @return
+*     @retval <0 failed(such as with `id` doesn't exist)
+*     @retvak 0 changed(won't call cbChanged)
+*     @retval 1 will be changed in the future(will call `cbChanged(parm)` then)
+*/
+int BlChangeTimer(uint64_t id, uint64_t period, int64_t startTime, BlTaskCallback cbChanged, void* parm);
 
 /*
 * @brief get error code after Socket I/O function returns fail
@@ -135,19 +147,29 @@ bool BlWaitEventForTime(BlEvent ev, uint32_t t);
 
 
 typedef struct tagBlFileContentWatcher BlFileContentWatcher;
-typedef void (*BlFileContentWatcherCallback)(void* parm);
+
+/*
+* @brief Callback function when file content changed
+* @param[in] path full path (absoluted) of content changed file
+* @param[in] relativeStart substring(`path`, `relativeStart`) is the path related to the watched directory.
+* @param[in] parm
+*/
+typedef void (*BlFileContentWatcherCallback)(const BlPathChar* path, int relativeStart, void* parm);
 
 /*
 * @brief Open a file content watcher
-* @param[in] fileName name of the watched file
+* @param[in] dir the watched directory(utf8)
+* @param[in] fileNames name array of the watched files(utf8).
+*            All these file names are relatived to `dir`.
+* @param[in] nFileNames count of name array `fileNames`
 * @param[in] delay the callback will be called after `delay` milliseconds,
 *                  for reducing the amount of events.
-* @param[in] cb the event callback
+* @param[in] cb the event callback(call in the thread pool)
 * @param[in] parm will be passed to the event callback `cb`
 * @return NULL if failed(call BlGetLastError() for error code), otherwise ok
 */
-BlFileContentWatcher* BlFileContentWatcherOpen(const char* dir,
-	int delayTime, BlFileContentWatcherCallback cb, void* parm);
+BlFileContentWatcher* BlFileContentWatcherOpen(const char* dir, const char** fileNames,
+	int nFileNames, int delay, BlFileContentWatcherCallback cb, void* parm);
 
 /*
 * @brief Close the filesystem event watcher
@@ -570,27 +592,26 @@ INLINE int BlSockBind(SOCKET sock, const struct sockaddr* addr) {
 
 /*
 * @brief Set the length of listen queue of socket
-* @param sock a TCP socket
+* @param sock a socket, generally a TCP socket
 * @param n the lenth of listen queue
 * @return
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 * @note Support unix domain socket
 */
-INLINE int BlTcpListen(SOCKET sock, int n) {
+INLINE int BlSockListen(SOCKET sock, int n) {
     return listen(sock, n);
 }
 
 /*
-* @brief connect a UDP socket
-* @param sock a UDP socket
+* @brief connect a socket
+* @param sock a socket
 * @param[in] addr internet address(v4 or v6) to connect
 * @return
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
-* @note DON'T support unix domain socket
 */
-INLINE int BlUdpConnect(SOCKET sock, const struct sockaddr* addr) {
+INLINE int BlSockConnect(SOCKET sock, const struct sockaddr* addr) {
     return connect(sock, addr, BlGetSockAddrLen(addr));
 }
 
@@ -636,7 +657,7 @@ INLINE SOCKET BlTcpNewServer(const struct sockaddr* addr, bool reuseAddr, int nL
 		if (r == 0) {
 			r = BlSockBind(sock, addr);
 			if (r == 0) {
-				r = BlTcpListen(sock, nListen);
+				r = BlSockListen(sock, nListen);
 				if (r == 0)
 					return sock;
 			}
@@ -656,144 +677,20 @@ INLINE SOCKET BlTcpNewServer(const struct sockaddr* addr, bool reuseAddr, int nL
 *   @retval other created ok
 * @note DON'T support unix domain socket, @see BlUnixNewServer.
 */
-INLINE SOCKET BlUdpNewPeerReceiver(const struct sockaddr* addr) {
+INLINE SOCKET BlUdpNewPeerReceiver(const struct sockaddr* addr, bool reuseAddr) {
 	SOCKET sock = BlSockUdp(addr->sa_family == AF_INET6);
 	if (sock == INVALID_SOCKET)
 		return sock;
-	int r = BlSockBind(sock, addr);
-	if (r == 0)
-		return sock;
+	int r = BlSockSetReuseAddr(sock, reuseAddr);
+	if (r == 0) {
+		r = BlSockBind(sock, addr);
+		if (r == 0)
+			return sock;
+	}
 	int err = BlGetLastError();
 	BlSockClose(sock);
 	BlSetLastError(err);
 	return INVALID_SOCKET;
-}
-
-/*
-* @brief Add a socket into a multicast group
-* @param[in] sock
-* @param[in] addr multicast group address(ipv4 or ipv6)
-* @param[in] nicAddr NULL-use default NIC, else-use that NIC
-* @note DON'T support unix domain socket
-*/
-INLINE int BlSockAddMemberShip(SOCKET sock, const struct sockaddr* addr,
-	const struct sockaddr* nicAddr) {
-	int level, option_name;
-	void const* option_value;
-	socklen_t option_len;
-	struct ip_mreq imr4;
-	struct ipv6_mreq imr6;
-
-	if (!addr)
-		return -1;
-	if (addr->sa_family == AF_INET) {
-		imr4.imr_multiaddr.s_addr = ((struct sockaddr_in*)addr)->sin_addr.s_addr;
-		imr4.imr_interface.s_addr = nicAddr ? ((struct sockaddr_in*)nicAddr)->sin_addr.s_addr : INADDR_ANY;
-		level = IPPROTO_IP;
-		option_name = IP_ADD_MEMBERSHIP;
-		option_value = &imr4;
-		option_len = sizeof imr4;
-	}
-	else if (addr->sa_family == AF_INET6) {
-		imr6.ipv6mr_multiaddr = ((struct sockaddr_in6*)addr)->sin6_addr;
-		assert(nicAddr == NULL); // TODO: get nic index by ipv6 addr
-		imr6.ipv6mr_interface = 0; // ???
-		level = IPPROTO_IPV6;
-		option_name = IPV6_JOIN_GROUP;
-		option_value = &imr6;
-		option_len = sizeof imr6;
-	}
-	else
-		return -1;
-
-	if (setsockopt(sock, level, option_name, (SOCKPARM)option_value, option_len) < 0) {
-#if defined(_WIN32)
-		if (BlGetLastError() == 0) // Windows sometimes lies about setsockopt() failing!
-			return 0;
-#endif
-		return -1;
-	}
-
-#ifdef __linux__
-	// This option is defined in modern versions of Linux to overcome a bug in the Linux kernel's default behavior.
-	// When set to 0, it ensures that we receive only packets that were sent to the specified IP multicast address,
-	// even if some other process on the same system has joined a different multicast group with the same port number.
-	int multicastAll = 0;
-	setsockopt(sock, level, IP_MULTICAST_ALL, // TODO: is this the same for IPv6?
-		(SOCKPARM)&multicastAll, sizeof multicastAll);
-	// Ignore the call's result.  Should it fail, we'll still receive packets (just perhaps more than intended)
-#endif
-
-	return 0;
-}
-
-/*
-* @brief Set multicast ttl and loop of a socket
-* @param[in] sock
-* @param[in] ttl_or_hops -1-don't set, use default, else-the multicast hop limit for the socket
-* @param[in] loop -1-don't set, use default, 1-the socket sees multicast packets that it has send itself, 0-no
-* @note DON'T support unix domain socket
-*/
-INLINE int BlSockSetMulticastTtlLoop(SOCKET sock, sa_family_t family, int ttl_or_hops, int loop) {
-	int level, option_name_ttl, option_name_loop;
-
-	if (family == AF_INET) {
-		level = IPPROTO_IP;
-		option_name_ttl = IP_MULTICAST_TTL;
-		option_name_loop = IP_MULTICAST_LOOP;
-	}
-	else if (family == AF_INET6) {
-		level = IPPROTO_IPV6;
-		option_name_ttl = IPV6_MULTICAST_HOPS;
-		option_name_loop = IPV6_MULTICAST_LOOP;
-	}
-	else
-		return -1;
-
-	if (ttl_or_hops >= 0)
-		setsockopt(sock, level, option_name_ttl, (SOCKPARM)&ttl_or_hops, sizeof(ttl_or_hops));
-	if (loop >= 0)
-		setsockopt(sock, level, option_name_loop, (SOCKPARM)&loop, sizeof(loop));
-	return 0;
-}
-
-/*
-* @brief quit a multicast group
-* @param[in] sock
-* @param[in] addr multicast group address(ipv4 or ipv6)
-* @param[in] nicAddr NULL-use default NIC, else-use that NIC
-* @note DON'T support unix domain socket
-*/
-INLINE int BlSockDropMemberShip(SOCKET sock, const struct sockaddr* addr,
-	const struct sockaddr* nicAddr) {
-	int level, option_name;
-	void const* option_value;
-	socklen_t option_len;
-	struct ip_mreq imr4;
-	struct ipv6_mreq imr6;
-
-	if (!addr)
-		return -1;
-	if (addr->sa_family == AF_INET) {
-		imr4.imr_multiaddr.s_addr = ((struct sockaddr_in*)addr)->sin_addr.s_addr;
-		imr4.imr_interface.s_addr = nicAddr ? ((struct sockaddr_in*)nicAddr)->sin_addr.s_addr : INADDR_ANY;
-		level = IPPROTO_IP;
-		option_name = IP_DROP_MEMBERSHIP;
-		option_value = &imr4;
-		option_len = sizeof imr4;
-	}
-	else if (addr->sa_family == AF_INET6) {
-		imr6.ipv6mr_multiaddr = ((struct sockaddr_in6*)addr)->sin6_addr;
-		assert(nicAddr == NULL); // TODO: get nic index by ipv6 addr
-		imr6.ipv6mr_interface = 0; // ???
-		level = IPPROTO_IPV6;
-		option_name = IPV6_LEAVE_GROUP;
-		option_value = &imr6;
-		option_len = sizeof imr6;
-	}
-	else
-		return -1;
-	return setsockopt(sock, level, option_name, (SOCKPARM)option_value, option_len);
 }
 
 /*
@@ -808,7 +705,7 @@ INLINE SOCKET BlUdpNewPeerSender(const struct sockaddr* addr) {
 	SOCKET sock = BlSockUdp(addr->sa_family == AF_INET6);
 	if (sock == INVALID_SOCKET)
 		return sock;
-	int r = BlUdpConnect(sock, addr);
+	int r = BlSockConnect(sock, addr);
 	if (r == 0)
 		return sock;
 	int err = BlGetLastError();
@@ -816,6 +713,187 @@ INLINE SOCKET BlUdpNewPeerSender(const struct sockaddr* addr) {
 	BlSetLastError(err);
 	return INVALID_SOCKET;
 }
+
+INLINE int _BlSockAddDropMemberShip(SOCKET sock, const struct sockaddr* addr,
+	const struct sockaddr* nicAddr, int addOrDrop) {
+	int level, option_name;
+	void const* option_value;
+	socklen_t option_len;
+	struct ip_mreq imr4;
+	struct ipv6_mreq imr6;
+
+	if (!addr) {
+		BlSetLastError(EINVAL);
+		return -1;
+	}
+
+	if (addr->sa_family == AF_INET) {
+		imr4.imr_multiaddr.s_addr = ((struct sockaddr_in*)addr)->sin_addr.s_addr;
+		imr4.imr_interface.s_addr = nicAddr ? ((struct sockaddr_in*)nicAddr)->sin_addr.s_addr : htonl(INADDR_ANY);
+		level = IPPROTO_IP;
+		option_name = addOrDrop? IP_ADD_MEMBERSHIP: IP_DROP_MEMBERSHIP;
+		option_value = &imr4;
+		option_len = sizeof imr4;
+	}
+	else if (addr->sa_family == AF_INET6) {
+		imr6.ipv6mr_multiaddr = ((struct sockaddr_in6*)addr)->sin6_addr;
+		imr6.ipv6mr_interface = nicAddr ? ((struct sockaddr_in6*)nicAddr)->sin6_scope_id : 0;
+		level = IPPROTO_IPV6;
+		option_name = addOrDrop? IPV6_ADD_MEMBERSHIP: IPV6_DROP_MEMBERSHIP;
+		option_value = &imr6;
+		option_len = sizeof imr6;
+	}
+	else {
+		BlSetLastError(EINVAL);
+		return -1;
+	}
+
+	if (setsockopt(sock, level, option_name, (SOCKPARM)option_value, option_len) < 0) {
+#if defined(_WIN32)
+		if (BlGetLastError() == 0) // Windows sometimes lies about setsockopt() failing!
+			return 0;
+#endif
+		return -1;
+	}
+
+#ifdef __linux__
+	if (addOrDrop) {
+		// This option is defined in modern versions of Linux to overcome a bug in the Linux kernel's default behavior.
+		// When set to 0, it ensures that we receive only packets that were sent to the specified IP multicast address,
+		// even if some other process on the same system has joined a different multicast group with the same port number.
+		int multicastAll = 0;
+		setsockopt(sock, level, IP_MULTICAST_ALL, // TODO: is this the same for IPv6?
+			(SOCKPARM)&multicastAll, sizeof multicastAll);
+		// Ignore the call's result. Should it fail, we'll still receive packets (just perhaps more than intended)
+	}
+#endif
+
+	return 0;
+}
+
+/*
+* @brief Add a socket into a multicast group
+* @param[in] sock
+* @param[in] addr multicast group address(ipv4 or ipv6)
+* @param[in] nicAddr NULL-use default NIC, else-use that NIC
+* @note DON'T support unix domain socket
+*/
+INLINE int BlSockAddMemberShip(SOCKET sock, const struct sockaddr* addr, const struct sockaddr* nicAddr) {
+	return _BlSockAddDropMemberShip(sock, addr, nicAddr, 1);
+}
+
+/*
+* @brief quit a multicast group
+* @param[in] sock
+* @param[in] addr multicast group address(ipv4 or ipv6)
+* @param[in] nicAddr NULL-use default NIC, else-use that NIC
+* @note DON'T support unix domain socket
+*/
+INLINE int BlSockDropMemberShip(SOCKET sock, const struct sockaddr* addr, const struct sockaddr* nicAddr) {
+	return _BlSockAddDropMemberShip(sock, addr, nicAddr, 0);
+}
+
+INLINE int BlSockSetMulticastIf(SOCKET sock, const struct sockaddr* addr) {
+	if (!addr) {
+		BlSetLastError(EINVAL);
+		return -1;
+	}
+	if (addr->sa_family == AF_INET)
+		return setsockopt(sock, IPPROTO_IP, IP_MULTICAST_IF, (SOCKPARM)addr, sizeof(addr));
+	return setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_IF, (SOCKPARM)addr, sizeof(addr));
+}
+
+/*
+* @brief Set multicast ttl of a socket
+* @param[in] sock
+* @param[in] family
+* @param[in] ttl_or_hops the multicast hop limit for the socket
+* @note DON'T support unix domain socket
+*/
+INLINE int BlSockSetMulticastTtl(SOCKET sock, bool ipv6, int ttl_or_hops) {
+	int level = ipv6 ? IPPROTO_IPV6 : IPPROTO_IP;
+	int option_name = ipv6? IPV6_MULTICAST_HOPS : IP_MULTICAST_TTL;
+	return setsockopt(sock, level, option_name, (SOCKPARM)&ttl_or_hops, sizeof(ttl_or_hops));
+}
+
+/*
+* @brief Set multicast loop of a socket
+* @param[in] sock
+* @param[in] family
+* @param[in] loop 1-the socket sees multicast packets that it has send itself, 0-no
+* @note DON'T support unix domain socket
+*/
+INLINE int BlSockSetMulticastLoop(SOCKET sock, bool ipv6, int loop) {
+	int level = ipv6 ? IPPROTO_IPV6 : IPPROTO_IP;
+	int option_name = ipv6 ? IPV6_MULTICAST_LOOP : IP_MULTICAST_LOOP;
+	return setsockopt(sock, level, option_name, (SOCKPARM)&loop, sizeof(loop));
+}
+
+INLINE int BlSockBindEx(SOCKET sock, const struct sockaddr* addr, const struct sockaddr* nicAddr) {
+	BlSockAddr46 localAddr;
+	sa_family_t family = addr->sa_family;
+	bool ipv6 = (family == AF_INET6);
+	if ((nicAddr && nicAddr->sa_family!=family) || (!ipv6 && family!=AF_INET)) {
+		BlSetLastError(EINVAL);
+		return -1;
+	}
+	socklen_t addrLen = BlGetSockAddrLen(addr);
+	BlCopySockAddr(&localAddr.sa, addrLen, addr);
+	if (ipv6)
+		localAddr.sa6.sin6_addr = nicAddr? ((struct sockaddr_in6*)nicAddr)->sin6_addr: in6addr_any;
+	else
+		localAddr.sa4.sin_addr.s_addr = nicAddr? ((struct sockaddr_in*)nicAddr)->sin_addr.s_addr: htonl(INADDR_ANY);
+	int r = bind(sock, &localAddr.sa, addrLen);
+	if (r < 0)
+		return r;
+	return BlSockAddMemberShip(sock, addr, nicAddr);
+}
+
+INLINE int BlSockConnectEx(SOCKET sock, const struct sockaddr* addr, const struct sockaddr* nicAddr, int ttl_or_hops, int loop) {
+	int r = connect(sock, addr, BlGetSockAddrLen(addr));
+	if (r < 0)
+		return r;
+	if (nicAddr) {
+		r = BlSockSetMulticastIf(sock, nicAddr);
+		if (r < 0)
+			return r;
+	}
+	bool ipv6 = (addr->sa_family == AF_INET6);
+	r = BlSockSetMulticastTtl(sock, ipv6, ttl_or_hops);
+	if (r < 0)
+		return r;
+	return BlSockSetMulticastLoop(sock, ipv6, loop);
+}
+
+INLINE SOCKET BlUdpNewPeerReceiverEx(const struct sockaddr* addr, const struct sockaddr* nicAddr, bool reuseAddr) {
+	SOCKET sock = BlSockUdp(addr->sa_family == AF_INET6);
+	if (sock == INVALID_SOCKET)
+		return sock;
+	int r = BlSockSetReuseAddr(sock, reuseAddr);
+	if (r == 0) {
+		r = BlSockBindEx(sock, addr, nicAddr);
+		if (r == 0)
+			return sock;
+	}
+	int err = BlGetLastError();
+	BlSockClose(sock);
+	BlSetLastError(err);
+	return INVALID_SOCKET;
+}
+
+INLINE SOCKET BlUdpNewPeerSenderEx(const struct sockaddr* addr, const struct sockaddr* nicAddr, int ttl_or_hops, int loop) {
+	SOCKET sock = BlSockUdp(addr->sa_family == AF_INET6);
+	if (sock == INVALID_SOCKET)
+		return sock;
+	int r = BlSockConnectEx(sock, addr, nicAddr, ttl_or_hops, loop);
+	if (r == 0)
+		return sock;
+	int err = BlGetLastError();
+	BlSockClose(sock);
+	BlSetLastError(err);
+	return INVALID_SOCKET;
+}
+
 
 #ifdef SUPPORT_AF_UNIX
 
@@ -852,7 +930,7 @@ INLINE SOCKET BlUnixNewServer(const char* path, bool unlinkPath, int nListen) {
 	if (sock != INVALID_SOCKET) {
 		int r = BlUnixBind(sock, path);
 		if (r == 0) {
-			r = BlTcpListen(sock, nListen);
+			r = BlSockListen(sock, nListen);
 			if (r == 0)
 				return sock;
 		}
@@ -1078,6 +1156,12 @@ INLINE bool BlTcpShutdown(BlTcpShutdown_t* io, SOCKET sock, int how, BlOnComplet
 */
 int BlFileOpen(const char* fileName, int flags, int mode);
 
+#ifdef WIN32
+int BlFileOpenN(const WCHAR* fileName, int flags, int mode);
+#else
+#define BlFileOpenN BlFileOpen
+#endif
+
 /*
 * @brief Close file
 * @return
@@ -1104,20 +1188,6 @@ INLINE bool BlFileWrite(BlFileWrite_t* io, int f, uint64_t offset,
 * @param[in] fd file handle or socket or ...
 */
 int BlCancelIo(int fd);
-
-#if 0
-[[BLACO_AWAIT_HINT]]
-int UdpBindEx(SOCKET sock, const SockAddr& addr, const SockAddr* nicAddr = NULL);
-
-INLINE int UdpConnectEx(SOCKET sock, const SockAddr& addr, const SockAddr* nicAddr = NULL) {
-
-}
-
-INLINE SOCKET UdpNewPeerReceiverEx(const SockAddr& addr, const SockAddr* nicAddr = NULL) {
-}
-
-SOCKET UdpNewPeerSenderEx(const SockAddr& addr, const SockAddr* nicAddr = NULL);
-#endif
 
 
 typedef struct tagBlCutexCoro BlCutexCoro;

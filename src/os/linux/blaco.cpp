@@ -43,8 +43,7 @@ struct _BlCancelIo_t {
 	int fd;
 };
 
-struct Worker {
-	size_t slot;
+struct Worker : public TimerMgr {
 	io_uring ring;
 	_BlAioBase* waitSqeHead;
 	_BlAioBase* waitSqeTail;
@@ -54,10 +53,6 @@ struct Worker {
 	_BlPostTask_t* firstFreeTask; // use _BlPostTask_t.base.next as next link
 	size_t numFreeCancels;
 	_BlCancelIo_t* firstFreeCancel; // use _BlCancel_t.base.next as next link
-	std::thread thread;
-	std::priority_queue<BTimer> timerQ;
-	std::unordered_map<uint64_t, TimerInfo*> timers;
-	uint64_t nextTimerId;
 
 	Worker() : waitSqeHead(nullptr), waitSqeTail(nullptr), numFreeTasks(0),
 		firstFreeTask(nullptr), numFreeCancels(0), firstFreeCancel(nullptr) {}
@@ -159,12 +154,13 @@ static void InitWorker(Worker& worker, size_t slot) {
 		FATAL_ERR("Can't create pipe fds for worker");
 }
 
-static void SubmitAndWaitCqe(struct io_uring* ring, struct io_uring_cqe** pCqe, std::priority_queue<BTimer>* timerQ) {
+static void SubmitAndWaitCqe(struct io_uring* ring, struct io_uring_cqe** pCqe,
+	std::priority_queue<OnceTimer>* onceTimerQ, TimerMap* timerMap, TimerQueue* timerQ) {
 	int r;
 	int64_t toWait;
 	struct __kernel_timespec ts;
 	for (;;) {
-		toWait = GetWaitTime(timerQ);
+		toWait = GetWaitTime(onceTimerQ, timerMap, timerQ);
 		io_uring_submit(ring);
 		if (toWait >= INFINITE)
 			r = io_uring_wait_cqe(ring, pCqe);
@@ -200,7 +196,6 @@ static void _BlIoLoop(size_t slot) {
 	Worker* worker = s_workers + slot;
 	struct io_uring* ring = &worker->ring;
 	struct io_uring_cqe* cqe;
-	auto* timerQ = &worker->timerQ;
 	_BlAioBase* lazyio;
 	bool hasRecvTask;
 	int r;
@@ -210,7 +205,7 @@ static void _BlIoLoop(size_t slot) {
 	_BlDoAio((_BlAioBase*)&worker->ioRecvTask);
 	sem_post(&s_initSema);
 	for (;;) {
-		SubmitAndWaitCqe(ring, &cqe, timerQ);
+		SubmitAndWaitCqe(ring, &cqe, &worker->onceTimerQ, &worker->timerMap, &worker->timerQ);
 		hasRecvTask = false;
 		for (;;) {
 			lazyio = (_BlAioBase*)io_uring_cqe_get_data(cqe);
@@ -275,6 +270,8 @@ void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers) {
 	s_numIoWorkers = numIoWorkers;
 	size_t numWorkers = numIoWorkers + numOtherWorkers;
 	s_numWorkers = numWorkers;
+	if (numWorkers >= 4096)
+		FATAL_ERR("Two many workers");
 	if (!s_initSemaHasInitialized) {
 		s_initSemaHasInitialized = true;
 		if (sem_init(&s_initSema, 0, 0) != 0)

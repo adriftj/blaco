@@ -29,6 +29,7 @@ extern "C" {
 #include <sys/un.h>
 #endif
 
+typedef char BlPathChar;
 typedef char* SOCKPARM;
 typedef int BlEvent;
 typedef int SOCKET;

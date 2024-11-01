@@ -1122,7 +1122,8 @@ mco_result mco_resume_mt(mco_coro* co) {
         return MCO_INVALID_COROUTINE;
     }
     mco_state oldState = (mco_state)BlFas32((int32_t volatile*)&co->state, MCO_SUSPENDED);
-    if (oldState == MCO_SUSPENDED) { // state was set by mco_yield first
+    if (oldState == MCO_SUSPENDED) {
+        // state was set by mco_yield_mt first, see 'Note on multithreading asynchonized I/O' in minicoro.h.
         co->state = MCO_RUNNING; /* The coroutine is now running. */
         _mco_jumpin(co);
     }
@@ -1174,7 +1175,8 @@ mco_result mco_yield_mt() {
         return MCO_STACK_OVERFLOW;
     }
 
-    if (co->state != MCO_RUNNING) {  /* set to MCO_SUSPENDED by mco_resume_mt first */
+    if (co->state != MCO_RUNNING) {
+        // set to MCO_SUSPENDED by mco_resume_mt first, see 'Note on multithreading asynchonized I/O' in minicoro.h.
         MCO_ASSERT(co->state == MCO_SUSPENDED);
         co->state = MCO_RUNNING;
         return MCO_SUCCESS;
@@ -1183,7 +1185,7 @@ mco_result mco_yield_mt() {
     mco_coro* prev_co = _mco_prepare_jumpout(co);
     MCO_ASSERT(prev_co != NULL || _mco_main_ctxbuf != NULL);
     _mco_ctxbuf* ctxbuf = prev_co ? &((_mco_context*)prev_co->context)->ctx : _mco_main_ctxbuf;
-    if (_mco_switch2(&((_mco_context*)co->context)->ctx, ctxbuf, &co->state)) {
+    if (_mco_switch2(&((_mco_context*)co->context)->ctx, ctxbuf, &co->state)) { // Handle race condition, see 'Note on multithreading asynchonized I/O' in minicoro.h.
         // Needn't to switch the context, rollback to current coroutine
         co->state = MCO_RUNNING;
         mco_current_co = co;

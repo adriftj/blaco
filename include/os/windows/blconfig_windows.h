@@ -15,6 +15,7 @@ extern "C" {
 #include <afunix.h>
 #endif
 
+typedef WCHAR BlPathChar;
 typedef char* SOCKPARM;
 typedef unsigned short sa_family_t;
 typedef HANDLE BlEvent;

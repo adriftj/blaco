@@ -20,6 +20,12 @@ typedef union {
 	struct sockaddr_storage ss;
 } BlSockAddr;
 
+typedef union {
+    struct sockaddr sa;
+    struct sockaddr_in sa4;
+    struct sockaddr_in6 sa6;
+} BlSockAddr46;
+
 INLINE socklen_t BlGetSockAddrLen(const struct sockaddr* addr) {
 	switch (addr->sa_family) {
 	case AF_INET: return sizeof(struct sockaddr_in);

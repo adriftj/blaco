@@ -81,12 +81,7 @@ static void EnumWsaProtocols() {
 
 #include "../../timer_priv.h"
 
-struct Worker {
-	size_t slot;
-	uint64_t nextTimerId;
-	std::thread thread;
-	std::priority_queue<BTimer> timerQ;
-	std::unordered_map<uint64_t, TimerInfo*> timers;
+struct Worker : public TimerMgr {
 };
 
 static HANDLE s_initSema = NULL;
@@ -106,7 +101,7 @@ void _BlIoLoop(size_t slot) {
 	for (;;) {
 		lazyio = nullptr;
 		err = 0;
-		toWait = GetWaitTime(&worker->timerQ);
+		toWait = GetWaitTime(&worker->onceTimerQ, &worker->timerMap, &worker->timerQ);
 		if (!::GetQueuedCompletionStatusEx(g_hIocp, &ovEntry, 1, &nEntries, toWait, TRUE)) {
 			err = GetLastError();
 			if (err == ERROR_SEM_TIMEOUT || err == WAIT_TIMEOUT)
@@ -157,11 +152,9 @@ SOCKET BlSockCreate(sa_family_t family, int sockType, int protocol) {
 }
 
 void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers) {
-	if (!(options & BL_INIT_DONT_WSASTARTUP)) {
-		WSADATA wsadata;
-		if (::WSAStartup(MAKEWORD(2, 2), &wsadata) != 0)
-			FATAL_ERR("Can not initialize winsock");
-	}
+	WSADATA wsadata;
+	if (::WSAStartup(MAKEWORD(2, 2), &wsadata) != 0)
+		FATAL_ERR("Can not initialize winsock");
 	LoadWsaFuncs();
 	EnumWsaProtocols();
 
@@ -174,6 +167,8 @@ void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers) {
 		numOtherWorkers = g_numCpus;
 	size_t numWorkers = numIoWorkers + numOtherWorkers;
 	s_numWorkers = numWorkers;
+	if (numWorkers >= 4096)
+		FATAL_ERR("Two many workers");
 	s_initSema = CreateSemaphore(NULL, 0, s_numWorkers, NULL);
 	if (s_initSema == NULL)
 		FATAL_ERR("Can not create init sema");
@@ -214,17 +209,30 @@ void BlExitNotify() {
 
 void BlWaitExited() {
 	_BlWaitExited();
+	WSACleanup();
 	g_hIocp = NULL;
 }
 
 int BlFileOpen(const char* fileName, int flags, int mode) {
+	WCHAR* pathw = _BlUtf8PathToWCHAR(fileName, -1, NULL);
+	if (!pathw) {
+		SetLastError(ERROR_INVALID_PARAMETER);
+#pragma warning(push)
+#pragma warning(disable: 4311)
+		return (int)INVALID_HANDLE_VALUE;
+#pragma warning(pop)
+	}
+	int f = BlFileOpenN(pathw, flags, mode);
+	free(pathw);
+	return f;
+}
+
+int BlFileOpenN(const WCHAR* fileName, int flags, int mode) {
 	DWORD access;
 	DWORD share;
 	DWORD disposition;
 	DWORD attributes = 0;
 	HANDLE file;
-	int n, wn;
-	WCHAR* pathw;
 
 	/* convert flags and mode to CreateFile parameters */
 	switch (flags & (BLFILE_O_RDONLY | BLFILE_O_WRONLY | BLFILE_O_RDWR)) {
@@ -357,33 +365,14 @@ int BlFileOpen(const char* fileName, int flags, int mode) {
 
 	/* Setting this flag makes it possible to open a directory. */
 	attributes |= FILE_FLAG_BACKUP_SEMANTICS;
-
-	n = strlen(fileName)+1;
-	wn = 2 * n;
-	pathw = (WCHAR*)malloc(wn);
-	if (!pathw) {
-		BlSetLastError(ERROR_OUTOFMEMORY);
-		return -1;
-	}
-	n = MultiByteToWideChar(CP_UTF8, 0, fileName, n, pathw, wn);
-	if (n <= 0) {
-		free(pathw);
-		BlSetLastError(ERROR_INVALID_PARAMETER);
-		return -1;
-	}
-	for (wn = 0; wn < n; ++wn) { // replace all unix path splitor to windows path splitor
-		if (pathw[wn] == L'/')
-			pathw[wn] = L'\\';
-	}
 	attributes |= FILE_FLAG_OVERLAPPED;
-	file = CreateFileW(pathw,
+	file = CreateFileW(fileName,
 		access,
 		share,
 		NULL,
 		disposition,
 		attributes,
 		NULL);
-	free(pathw);
 	if (file == INVALID_HANDLE_VALUE) {
 		DWORD error = GetLastError();
 		if (error == ERROR_FILE_EXISTS && (flags & BLFILE_O_CREAT) &&

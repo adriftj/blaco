@@ -2,36 +2,22 @@ void BlIoLoop() {
 	_BlIoLoop(0);
 }
 
-static void OnTimerArrived(void* p) {
-	TimerInfo* ti = (TimerInfo*)p;
-	BlTaskCallback cb = ti->cb;
-	if (!cb)
-		return;
-	Worker* worker = st_worker;
-	assert(worker != nullptr);
-	if (cb == TimerToBeDelete) {
-		worker->timers.erase(ti->id);
-		free(ti);
-	}
-	else {
-		cb(ti->parm);
-		if (ti->period == Duration(0)) { // run once
-			worker->timers.erase(ti->id);
-			free(ti);
-		}
-		else {
-			ti->startTime += ti->period;
-			worker->timerQ.emplace(BTimer{ ti->startTime, OnTimerArrived, ti });
-		}
-	}
+inline size_t slot2id(size_t slot, size_t id) {
+	return (slot << 52) | (id & ((((uint64_t)1) << 52) - 1));
+}
+
+inline size_t id2slot(size_t& id) {
+	size_t slot = (id >> 52);
+	id &= (((uint64_t)1) << 52) - 1;
+	return slot;
 }
 
 static void OnAddTimer(TimerInfo* ti) {
 	Worker* worker = (Worker*)st_worker;
 	assert(worker != nullptr);
-	bool ok = worker->timers.insert(std::make_pair(ti->id, ti)).second;
+	bool ok = worker->timerMap.emplace(ti->id, ti).second;
 	assert(ok);
-	worker->timerQ.emplace(BTimer{ ti->startTime, OnTimerArrived, ti });
+	worker->timerQ.insert(ti);
 }
 
 uint64_t BlAddTimer(uint64_t period, int64_t startTime, BlTaskCallback cb, void* parm, bool isIoTask) {
@@ -39,7 +25,7 @@ uint64_t BlAddTimer(uint64_t period, int64_t startTime, BlTaskCallback cb, void*
 	if (!ti)
 		return 0;
 	size_t slot = PickupWorker(isIoTask);
-	uint64_t id = (uint64_t)BlAddFetch64((volatile int64_t*)&s_workers[slot].nextTimerId, 1);
+	uint64_t id = (uint64_t)BlAtomicInc64((volatile int64_t*)&s_workers[slot].nextTimerId);
 	Duration dPeriod(period);
 	TimePoint tNow = std::chrono::system_clock::now();
 	TimePoint t = startTime <= 0 ? tNow + Duration(-startTime) :
@@ -58,15 +44,16 @@ uint64_t BlAddTimer(uint64_t period, int64_t startTime, BlTaskCallback cb, void*
 		free(ti);
 		return 0;
 	}
-	return (slot << 52) | (id & ( (((uint64_t)1) << 52) - 1) );
+	return slot2id(slot, id);
 }
 
 static int DeleteTimerInWorker(Worker* worker, uint64_t id) {
-	auto& timers = worker->timers;
+	auto& timers = worker->timerMap;
 	auto it = timers.find(id);
 	if (it == timers.end())
 		return -1;
-	it->second->cb = TimerToBeDelete;
+	worker->timerQ.erase(it->second);
+	timers.erase(it);
 	return 0;
 }
 
@@ -86,18 +73,76 @@ static void OnDelTimer(DelTimerInfo* d) {
 }
 
 int BlDelTimer(uint64_t id, BlTaskCallback cbDeleted, void* parm) {
-	size_t slot = (id >> 52);
-	id &= (((uint64_t)1) << 52) - 1;
+	size_t slot = id2slot(id);
 	if (slot >= s_numWorkers)
 		return -1;
 	Worker* worker = (Worker*)st_worker;
 	if (worker && worker->slot == slot)
 		return DeleteTimerInWorker(worker, id);
 	DelTimerInfo* d = (DelTimerInfo*)malloc(sizeof(DelTimerInfo));
+	if (!d)
+		return -1;
 	d->id = id;
 	d->cb = cbDeleted;
 	d->parm = parm;
 	if (!_BlPostTaskToWorker(slot, (BlTaskCallback)OnDelTimer, d)) {
+		free(d);
+		return -1;
+	}
+	return 1;
+}
+
+struct ChangeTimerInfo {
+	uint64_t id;
+	uint64_t period;
+	int64_t startTime;
+	BlTaskCallback cb;
+	void* parm;
+};
+
+static int ChangeTimerInWorker(Worker* worker, uint64_t id, uint64_t period, int64_t startTime) {
+	auto& timers = worker->timerMap;
+	auto it = timers.find(id);
+	if (it == timers.end())
+		return -1;
+	TimerInfo* ti = it->second;
+	worker->timerQ.erase(ti);
+	Duration dPeriod(period);
+	TimePoint tNow = std::chrono::system_clock::now();
+	TimePoint t = startTime <= 0 ? tNow + Duration(-startTime) :
+		TimePoint() + Duration(startTime);
+	if (period > 0 && t < tNow) {
+		auto d = std::chrono::duration_cast<Duration>(tNow - t);
+		auto n = ((d.count() + period) / period) * period;
+		t += Duration(n);
+	}
+	ti->period = dPeriod;
+	ti->startTime = t;
+	worker->timerQ.insert(ti);
+	return 0;
+}
+
+static void OnChangeTimer(ChangeTimerInfo* d) {
+	Worker* worker = (Worker*)st_worker;
+	assert(worker != nullptr);
+	ChangeTimerInWorker(worker, d->id, d->period, d->startTime);
+	if (d->cb)
+		d->cb(d->parm);
+	free(d);
+}
+
+int BlChangeTimer(uint64_t id, uint64_t period, int64_t startTime, BlTaskCallback cbChanged, void* parm) {
+	size_t slot = id2slot(id);
+	if (slot >= s_numWorkers)
+		return -1;
+	Worker* worker = (Worker*)st_worker;
+	if (worker && worker->slot == slot)
+		return ChangeTimerInWorker(worker, id, period, startTime);
+	ChangeTimerInfo* d = (ChangeTimerInfo*)malloc(sizeof(ChangeTimerInfo));
+	d->id = id;
+	d->cb = cbChanged;
+	d->parm = parm;
+	if (!_BlPostTaskToWorker(slot, (BlTaskCallback)OnChangeTimer, d)) {
 		free(d);
 		return -1;
 	}
@@ -110,15 +155,15 @@ bool BlAddOnceTimer(int64_t startTime, BlTaskCallback cb, void* parm) {
 		return false;
 	TimePoint tNow = std::chrono::system_clock::now();
 	TimePoint t = startTime <= 0 ? tNow + Duration(-startTime) : TimePoint() + Duration(startTime);
-	worker->timerQ.emplace(BTimer{ t, cb, parm });
+	worker->onceTimerQ.emplace(OnceTimer{ t, cb, parm });
 	return true;
 }
 
-void _BlWaitExited() {
+inline void _BlWaitExited() {
 	for (size_t i = 0; i < s_numWorkers; ++i) {
 		if (s_workers[i].thread.get_id() != std::thread::id())
 			s_workers[i].thread.join();
-		for (auto& it : s_workers[i].timers)
+		for (auto& it : s_workers[i].timerMap)
 			free(it.second);
 	}
 	delete[] s_workers;

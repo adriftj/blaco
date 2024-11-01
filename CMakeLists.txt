@@ -74,7 +74,7 @@ add_compile_options("$<$<C_COMPILER_ID:MSVC>:/utf-8>")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
 if ("${osname}" STREQUAL "windows")
-    set(OSLIBS wsock32 ws2_32)
+    set(OSLIBS wsock32 ws2_32 shlwapi)
 else()
     set(OSLIBS -luring)
 endif()
