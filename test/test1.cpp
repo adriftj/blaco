@@ -339,13 +339,15 @@ bl::task<void> udp_receiver3() {
 }
 
 bl::task<void> udp_sender3() {
-	SOCKET sockS = BlUdpNewPeerSenderEx(bl::SockAddr("224.34.129.38", 43217), nullptr, 128, 1);
+	SOCKET sockS = BlSockUdp(false);
 	REQUIRE(sockS != INVALID_SOCKET);
+	REQUIRE(0 == BlSockSetMulticastTtl(sockS, false, 128));
+	REQUIRE(0==BlSockSetMulticastLoop(sockS, false, 1));
 	char buf[128] = "Haha, this is sender speak!";
 	size_t n = strlen(buf);
 	//int rev = BlSockPoll(sockS, POLLWRNORM, 0);
 	//REQUIRE(rev == POLLWRNORM);
-	auto nSend = co_await bl::SockSend(sockS, buf, n);
+	auto nSend = co_await bl::SockSendTo(sockS, bl::SockAddr("224.34.129.38", 43217), buf, n);
 	REQUIRE(nSend == n);
 	char buf2[128];
 	size_t n2 = sizeof(buf2);
@@ -359,7 +361,7 @@ bl::task<void> udp_sender3() {
 	std::cout << "Udp_sender3: received same content I have sent." << std::endl;
 }
 
-TEST_CASE("+test udp 3") {
+TEST_CASE("test udp 3") {
 	BlInit(0, 0, 0);
 	bl::go(udp_receiver3().get_handle());
 	bl::go(udp_sender3().get_handle());

@@ -8,7 +8,7 @@ int main(int argc, char** argv) {
 
     // defaults
     context.addFilter("test-case-exclude", "est*"); // exclude test cases
-    context.addFilter("test-case-exclude", "test*"); // exclude test cases
+    //context.addFilter("test-case-exclude", "test*"); // exclude test cases
     //context.setOption("abort-after", 5);              // stop test execution after 5 failed assertions
     //context.setOption("order-by", "name");            // sort the test cases by their name
 
