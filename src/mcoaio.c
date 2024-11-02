@@ -35,12 +35,13 @@ static void McoTcpAcceptLoop(mco_coro* coro) {
 	desc.storage_size = sizeof(McoTcpSessionLoopParm);
 	for (;;) {
 		peerLen = sizeof(peer);
-		aSock = McoTcpAccept(parm->sock, parm->family, &peer.sa, &peerLen);
-		if (aSock < 0) {
-			Tlog(parm->opts->fnLog, parm->opts->logger, "McoTcpAccept failed", -aSock);
+		int rs = McoTcpAccept(parm->sock, parm->family, &peer.sa, &peerLen);
+		if (rs < 0) {
+			Tlog(parm->opts->fnLog, parm->opts->logger, "McoTcpAccept failed", -rs);
 			//McoTcpClose(parm->sock);//TODO: FIXME: how to handle this situation?
 			break;
 		}
+		aSock = rs;
 		mco_result r = mco_create(&coroSession, &desc);
 		if (r != MCO_SUCCESS) {
 			McoTcpClose(aSock);
