@@ -256,8 +256,8 @@ static void CheckWaitSqeAio() {
 
 static void BlockSignals() {
 	sigset_t mask;
-	sigemptyset(&mask);
-	sigprocmask(SIG_SETMASK, &mask, NULL);
+	sigfillset(&mask);
+	pthread_sigmask(SIG_BLOCK, &mask, NULL);
 }
 
 void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers) {
