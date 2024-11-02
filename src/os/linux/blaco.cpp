@@ -10,6 +10,19 @@
 #include "blaio.h"
 #include "../../timer_priv.h"
 
+// TODO: {{ temporary solution: copy from liburing2.8
+#define IORING_SETUP_COOP_TASKRUN	(1U << 8)
+#define IORING_SETUP_SINGLE_ISSUER	(1U << 12)
+#define IORING_SETUP_DEFER_TASKRUN	(1U << 13)
+
+#define IORING_ASYNC_CANCEL_ALL	(1U << 0)
+#define IORING_ASYNC_CANCEL_FD	(1U << 1)
+static inline void io_uring_prep_cancel_fd(struct io_uring_sqe* sqe, int fd, unsigned int flags) {
+	io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, NULL, 0, 0);
+	sqe->cancel_flags = (__u32)flags | IORING_ASYNC_CANCEL_FD;
+}
+// TODO: }}
+
 static unsigned s_numSqeEntries = 4096; // default
 
 static void FatalErr(const char* sErr, const char* file, int line) {
@@ -121,15 +134,6 @@ inline void _BlInitRecvTask(_BlRecvTask_t* io) {
 	_BLAIOBASE_INIT(_BlOnSqeRecvTask, _BlOnCqeRecvTask)
 }
 
-// TODO: {{ temporary solution: copy from liburing2.8
-#define IORING_ASYNC_CANCEL_ALL	(1U << 0)
-#define IORING_ASYNC_CANCEL_FD	(1U << 1)
-static inline void io_uring_prep_cancel_fd(struct io_uring_sqe* sqe, int fd, unsigned int flags) {
-	io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, NULL, 0, 0);
-	sqe->cancel_flags = (__u32)flags | IORING_ASYNC_CANCEL_FD;
-}
-// TODO: }}
-
 static void _BlOnSqeCancelIo(_BlCancelIo_t* io, struct io_uring_sqe* sqe) {
 	if(io->io)
 		io_uring_prep_cancel(sqe, io->io, IORING_ASYNC_CANCEL_ALL);
@@ -155,17 +159,6 @@ inline void _BlInitCancelIo(_BlCancelIo_t* io, int fd, BlAioBase* aio) {
 	_BLAIOBASE_INIT(_BlOnSqeCancelIo, _BlOnCqeAio)
 	io->fd = fd;
 	io->io = aio;
-}
-
-static void InitWorker(Worker& worker, size_t slot) {
-	worker.slot = slot;
-	worker.nextTimerId = 0;
-	int r = io_uring_queue_init(s_numSqeEntries, &worker.ring, 0);
-	if (r < 0)
-		FATAL_ERR("io_uring_queue_init failed");
-	r = pipe2(worker.fdPipe, 0);
-	if (r < 0)
-		FATAL_ERR("Can't create pipe fds for worker");
 }
 
 static void SubmitAndWaitCqe(struct io_uring* ring, struct io_uring_cqe** pCqe,
@@ -213,6 +206,27 @@ static void _BlIoLoop(size_t slot) {
 	BlAioBase* lazyio;
 	bool hasRecvTask;
 	int r;
+
+	worker->slot = slot;
+	worker->nextTimerId = 0;
+
+	io_uring_params params = {};
+	params.flags |= IORING_SETUP_SINGLE_ISSUER; // since each thread has a ring, only this thread will touch this ring
+	// the work-thread should process each incoming job sequentially -- there's probably little use in having queued
+	// jobs available, e.g. between context switches
+	// I'm don't feel confident in my understanding of these switches(it is noted that the computation here is negligible)
+	params.flags |= IORING_SETUP_COOP_TASKRUN;
+	params.flags |= IORING_SETUP_DEFER_TASKRUN;
+	// "share async backend", but not SQ/CQ
+	//params.flags |= IORING_SETUP_ATTACH_WQ;
+	//params.wq_fd = root_fd;
+	r = io_uring_queue_init_params(s_numSqeEntries, ring, &params);
+	if (r < 0)
+		FATAL_ERR("io_uring_queue_init failed");
+
+	r = pipe2(worker->fdPipe, 0);
+	if (r < 0)
+		FATAL_ERR("Can't create pipe fds for worker");
 
 	st_worker = worker;
 	_BlInitRecvTask(&worker->ioRecvTask);
@@ -294,7 +308,6 @@ void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers) {
 	s_workers = new Worker[numWorkers];
 	bool useMain = (options & BL_INIT_USE_MAIN_THREAD_AS_WORKER);
 	for (size_t i = 0; i < numWorkers; ++i) {
-		InitWorker(s_workers[i], i);
 		if (!useMain || i > 0)
 			s_workers[i].thread = std::thread([i]() { _BlIoLoop(i); });
 	}
