@@ -1186,8 +1186,12 @@ INLINE bool BlFileWrite(BlFileWrite_t* io, int f, uint64_t offset,
 /*
 * @brief Cancel all I/O of (HANDLE,SOCKET,...) `fd`
 * @param[in] fd file handle or socket or ...
+* @param[in] io NULL-cancel all I/O of `fd`, other-cancel the specific I/O related to `io`
+* @return
+*   @retval -1 error, call BlGetLastError() for error code
+*   @retval other ok
 */
-int BlCancelIo(int fd);
+int BlCancelIo(int fd, BlAioBase* io);
 
 
 typedef struct tagBlCutexCoro BlCutexCoro;

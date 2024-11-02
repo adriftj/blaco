@@ -28,25 +28,26 @@ struct _BlPostTaskParm {
 };
 
 struct _BlPostTask_t {
-	_BlAioBase base;
+	BlAioBase base;
 	size_t slot;
 	_BlPostTaskParm task;
 };
 
 struct _BlRecvTask_t {
-	_BlAioBase base;
+	BlAioBase base;
 	_BlPostTaskParm tasks[32];
 };
 
 struct _BlCancelIo_t {
-	_BlAioBase base;
+	BlAioBase base;
 	int fd;
+	BlAioBase* io;
 };
 
 struct Worker : public TimerMgr {
 	io_uring ring;
-	_BlAioBase* waitSqeHead;
-	_BlAioBase* waitSqeTail;
+	BlAioBase* waitSqeHead;
+	BlAioBase* waitSqeTail;
 	_BlRecvTask_t ioRecvTask;
 	int fdPipe[2];
 	size_t numFreeTasks;
@@ -82,7 +83,7 @@ static void OnPostTaskCompleted(_BlPostTask_t* io) {
 	if (worker->numFreeTasks >= 1024)
 		free(io);
 	else {
-		io->base.next = (_BlAioBase*)worker->firstFreeTask;
+		io->base.next = (BlAioBase*)worker->firstFreeTask;
 		worker->firstFreeTask = io;
 		++worker->numFreeTasks;
 	}
@@ -120,8 +121,20 @@ inline void _BlInitRecvTask(_BlRecvTask_t* io) {
 	_BLAIOBASE_INIT(_BlOnSqeRecvTask, _BlOnCqeRecvTask)
 }
 
+// TODO: {{ temporary solution: copy from liburing2.8
+#define IORING_ASYNC_CANCEL_ALL	(1U << 0)
+#define IORING_ASYNC_CANCEL_FD	(1U << 1)
+static inline void io_uring_prep_cancel_fd(struct io_uring_sqe* sqe, int fd, unsigned int flags) {
+	io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, NULL, 0, 0);
+	sqe->cancel_flags = (__u32)flags | IORING_ASYNC_CANCEL_FD;
+}
+// TODO: }}
+
 static void _BlOnSqeCancelIo(_BlCancelIo_t* io, struct io_uring_sqe* sqe) {
-	//io_uring_prep_cancel_fd(sqe, io->fd, 0); // TODO: flags should be IORING_ASYNC_CANCEL_ALL | IORING_ASYNC_CANCEL_FD ?
+	if(io->io)
+		io_uring_prep_cancel(sqe, io->io, IORING_ASYNC_CANCEL_ALL);
+	else
+		io_uring_prep_cancel_fd(sqe, io->fd, IORING_ASYNC_CANCEL_ALL|IORING_ASYNC_CANCEL_FD);
 	io_uring_sqe_set_data(sqe, io);
 }
 
@@ -131,16 +144,17 @@ static void OnCancelIoCompleted(_BlCancelIo_t* io) {
 	if (worker->numFreeCancels >= 1024)
 		free(io);
 	else {
-		io->base.next = (_BlAioBase*)worker->firstFreeCancel;
+		io->base.next = (BlAioBase*)worker->firstFreeCancel;
 		worker->firstFreeCancel = io;
 		++worker->numFreeCancels;
 	}
 }
 
-inline void _BlInitCancelIo(_BlCancelIo_t* io, int fd) {
+inline void _BlInitCancelIo(_BlCancelIo_t* io, int fd, BlAioBase* aio) {
 	BlOnCompletedAio onCompleted = (BlOnCompletedAio)OnCancelIoCompleted;
 	_BLAIOBASE_INIT(_BlOnSqeCancelIo, _BlOnCqeAio)
 	io->fd = fd;
+	io->io = aio;
 }
 
 static void InitWorker(Worker& worker, size_t slot) {
@@ -196,19 +210,19 @@ static void _BlIoLoop(size_t slot) {
 	Worker* worker = s_workers + slot;
 	struct io_uring* ring = &worker->ring;
 	struct io_uring_cqe* cqe;
-	_BlAioBase* lazyio;
+	BlAioBase* lazyio;
 	bool hasRecvTask;
 	int r;
 
 	st_worker = worker;
 	_BlInitRecvTask(&worker->ioRecvTask);
-	_BlDoAio((_BlAioBase*)&worker->ioRecvTask);
+	_BlDoAio((BlAioBase*)&worker->ioRecvTask);
 	sem_post(&s_initSema);
 	for (;;) {
 		SubmitAndWaitCqe(ring, &cqe, &worker->onceTimerQ, &worker->timerMap, &worker->timerQ);
 		hasRecvTask = false;
 		for (;;) {
-			lazyio = (_BlAioBase*)io_uring_cqe_get_data(cqe);
+			lazyio = (BlAioBase*)io_uring_cqe_get_data(cqe);
 			assert(lazyio != nullptr);
 			hasRecvTask = (lazyio == &worker->ioRecvTask.base);
 			int res = cqe->res;
@@ -221,7 +235,7 @@ static void _BlIoLoop(size_t slot) {
 		if (s_exitApplication)
 			break;
 		if (hasRecvTask)
-			_BlDoAio((_BlAioBase*)&worker->ioRecvTask);
+			_BlDoAio((BlAioBase*)&worker->ioRecvTask);
 	}
 
 	io_uring_queue_exit(ring);
@@ -241,7 +255,7 @@ static void _BlIoLoop(size_t slot) {
 static void CheckWaitSqeAio() {
 	Worker* worker = (Worker*)st_worker;
 	assert(worker);
-	_BlAioBase* head;
+	BlAioBase* head;
 	struct io_uring* ring = &worker->ring;
 	while ((head = worker->waitSqeHead) != nullptr) {
 		struct io_uring_sqe* sqe = io_uring_get_sqe(ring);
@@ -330,7 +344,7 @@ static bool _BlPostTaskToWorker(size_t slot, BlTaskCallback cb, void* parm) {
 			_BlInitPostTask(ioTask, slot, cb, parm);
 		}
 		ioTask->base.coro = ioTask;
-		_BlDoAio((_BlAioBase*)ioTask);
+		_BlDoAio((BlAioBase*)ioTask);
 	}
 	else {
 		_BlPostTaskParm task;
@@ -364,12 +378,13 @@ void BlWaitExited() {
 	s_numIoWorkers = 0;
 }
 
-inline void CancelIoInWorker(Worker* worker, int fd) {
+inline void CancelIoInWorker(Worker* worker, int fd, BlAioBase* io) {
 	_BlCancelIo_t* ioCancel = worker->firstFreeCancel;
 	if (ioCancel) {
 		--worker->numFreeCancels;
 		worker->firstFreeCancel = (_BlCancelIo_t*)ioCancel->base.next;
 		ioCancel->fd = fd;
+		ioCancel->io = io;
 	}
 	else {
 		ioCancel = (_BlCancelIo_t*)malloc(sizeof(_BlCancelIo_t));
@@ -378,36 +393,43 @@ inline void CancelIoInWorker(Worker* worker, int fd) {
 			// TODO: add log
 			return;
 		}
-		_BlInitCancelIo(ioCancel, fd);
+		_BlInitCancelIo(ioCancel, fd, io);
 	}
 	ioCancel->base.coro = ioCancel;
-	_BlDoAio((_BlAioBase*)ioCancel);
+	_BlDoAio((BlAioBase*)ioCancel);
+}
+
+static void OnCancelIoFdPosted(void* parm) {
+	CancelIoInWorker(st_worker, (intptr_t)parm, NULL);
 }
 
 static void OnCancelIoPosted(void* parm) {
-	//CancelIoInWorker(st_worker, (int)parm);
+	CancelIoInWorker(st_worker, 0, (BlAioBase*)parm);
 }
 
-int BlCancelIo(int fd) {
-	assert(false); // need io_uring/linux kernel new version
+int BlCancelIo(int fd, BlAioBase* io) {
 	Worker* worker = st_worker;
 	if (worker) // inside _BlIoLoop(thread pool)
-		CancelIoInWorker(worker, fd);
+		CancelIoInWorker(worker, fd, io);
 	else {
 		_BlPostTaskParm task;
-		task.cb = OnCancelIoPosted;
-		//task.parm = (void*)fd;
+		if (io) {
+			task.cb = OnCancelIoPosted;
+			task.parm = io;
+		}
+		else {
+			task.cb = OnCancelIoFdPosted;
+			task.parm = (void*)(intptr_t)fd;
+		}
 		size_t slot = PickupWorker(true);
 		int r = write(s_workers[slot].fdPipe[1], &task, sizeof(task));
-		if (r < 0) {
-			// TODO: add log
-			return -errno;
-		}
+		if (r < 0)
+			return -1;
 	}
 	return 0;
 }
 
-bool _BlDoAio(_BlAioBase* io) {
+bool _BlDoAio(BlAioBase* io) {
 	Worker* worker = (Worker*)st_worker;
 	if (!worker) {
 		io->ret = -ENOTSUP;
@@ -433,13 +455,13 @@ bool _BlDoAio(_BlAioBase* io) {
 	return true;
 }
 
-inline void CheckWaitSqeAndCompleteIo(_BlAioBase* io) {
+inline void CheckWaitSqeAndCompleteIo(BlAioBase* io) {
 	CheckWaitSqeAio();
 	if (io->onCompleted)
 		io->onCompleted(io->coro);
 }
 
-void _BlOnCqeAio(_BlAioBase* io, int res) {
+void _BlOnCqeAio(BlAioBase* io, int res) {
 	io->ret = res;
 	CheckWaitSqeAndCompleteIo(io);
 }
@@ -476,7 +498,7 @@ void _BlOnCqeSockMustSend(BlSockMustSend_t* io, int r) {
 		else {
 			io->len -= r;
 			io->buf = ((char*)io->buf)+r;
-			if (_BlDoAio((_BlAioBase*)io))
+			if (_BlDoAio((BlAioBase*)io))
 				return;
 			assert(false); // TODO: add log
 		}
@@ -494,7 +516,7 @@ void _BlOnCqeSockMustSendVec(BlSockMustSendVec_t* io, int r) {
 		if (io->msghdr.msg_iovlen <= 0)
 			io->base.ret = 0;
 		else {
-			if (_BlDoAio((_BlAioBase*)io))
+			if (_BlDoAio((BlAioBase*)io))
 				return;
 			assert(false); // TODO: add log
 		}
@@ -543,7 +565,7 @@ void _BlOnCqeSockMustRecv(BlSockMustRecv_t* io, int r) {
 		else {
 			io->len -= r;
 			io->buf = ((char*)io->buf)+r;
-			if (_BlDoAio((_BlAioBase*)io))
+			if (_BlDoAio((BlAioBase*)io))
 				return;
 			assert(false); // TODO: add log
 		}
@@ -561,7 +583,7 @@ void _BlOnCqeSockMustRecvVec(BlSockMustRecvVec_t* io, int r) {
 		if (io->msghdr.msg_iovlen <= 0)
 			io->base.ret = 0;
 		else {
-			if (_BlDoAio((_BlAioBase*)io))
+			if (_BlDoAio((BlAioBase*)io))
 				return;
 			assert(false); // TODO: add log
 		}

@@ -113,12 +113,12 @@ INLINE void BlSetLastError(int err) {
 	errno = err;
 }
 
-typedef struct tagBlAioBase _BlAioBase;
-typedef void (*_BlOnSqe)(_BlAioBase* base, struct io_uring_sqe* sqe);
-typedef void (*_BlOnCqe)(_BlAioBase* base, int r);
+typedef struct tagBlAioBase BlAioBase;
+typedef void (*_BlOnSqe)(BlAioBase* base, struct io_uring_sqe* sqe);
+typedef void (*_BlOnCqe)(BlAioBase* base, int r);
 typedef void (*BlOnCompletedAio)(void* coro);
 struct tagBlAioBase {
-	_BlAioBase* next;
+	BlAioBase* next;
 	_BlOnSqe onSqe;
 	_BlOnCqe onCqe;
 	BlOnCompletedAio onCompleted;
@@ -132,11 +132,11 @@ struct tagBlAioBase {
 #define _BLAIOBASE_INIT(fSqe, fCqe) _BLAIOBASE_INITX(fSqe, fCqe)
 #define _BLAIOBASE_INITMSG(fSqe, fCqe) _BLAIOBASE_INITX(fSqe, fCqe)
 
-void _BlOnCqeAio(_BlAioBase* io, int r);
-bool _BlDoAio(_BlAioBase* io);
+void _BlOnCqeAio(BlAioBase* io, int r);
+bool _BlDoAio(BlAioBase* io);
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	SOCKET listenSock;
 	struct sockaddr* peer;
@@ -153,11 +153,11 @@ INLINE void BlInitTcpAccept(BlTcpAccept_t* io, SOCKET sock, sa_family_t unused,
 	io->peerLen = peerLen;
 }
 
-INLINE bool BlDoTcpAccept(BlTcpAccept_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoTcpAccept(BlTcpAccept_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	SOCKET sock;
 	const struct sockaddr* addr;
@@ -171,11 +171,11 @@ INLINE void BlInitTcpConnect(BlTcpConnect_t* io, SOCKET sock, const struct socka
 	io->addr = addr;
 }
 
-INLINE bool BlDoTcpConnect(BlTcpConnect_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoTcpConnect(BlTcpConnect_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	SOCKET sock;
 	const void* buf;
@@ -193,10 +193,10 @@ INLINE void BlInitSockSend(BlSockSend_t* io, SOCKET sock, const void* buf, uint3
 	io->flags = flags;
 }
 
-INLINE bool BlDoSockSend(BlSockSend_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockSend(BlSockSend_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 #define _BlSockMsgMembers \
-	_BlAioBase base;      \
+	BlAioBase base;      \
 	SOCKET sock;          \
 	struct msghdr msghdr; \
 	int flags;
@@ -225,7 +225,7 @@ INLINE void BlInitSockSendVec(BlSockSendVec_t* io, SOCKET sock,
 	_BLAIOMSG_INIT(_BlOnSqeSockSendXMsg, _BlOnCqeAio, bufVec, bufCnt)
 }
 
-INLINE bool BlDoSockSendVec(BlSockSendVec_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockSendVec(BlSockSendVec_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
 	_BlSockMsgMembers
@@ -241,7 +241,7 @@ INLINE void BlInitSockSendTo(BlSockSendTo_t* io, SOCKET sock, const struct socka
 	io->msghdr.msg_namelen = BlGetSockAddrLen(addr);
 }
 
-INLINE bool BlDoSockSendTo(BlSockSendTo_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockSendTo(BlSockSendTo_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
 	_BlSockMsgMembers
@@ -254,10 +254,10 @@ INLINE void BlInitSockSendVecTo(BlSockSendVecTo_t* io, SOCKET sock, const struct
 	io->msghdr.msg_namelen = BlGetSockAddrLen(addr);
 }
 
-INLINE bool BlDoSockSendVecTo(BlSockSendVecTo_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockSendVecTo(BlSockSendVecTo_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	SOCKET sock;
 	const void* buf;
@@ -277,7 +277,7 @@ INLINE void BlInitSockMustSend(BlSockMustSend_t* io, SOCKET sock,
 	io->flags = flags;
 }
 
-INLINE bool BlDoSockMustSend(BlSockMustSend_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockMustSend(BlSockMustSend_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
 	_BlSockMsgMembers
@@ -290,11 +290,11 @@ INLINE void BlInitSockMustSendVec(BlSockMustSendVec_t* io, SOCKET sock,
 	_BLAIOMSG_INIT(_BlOnSqeSockSendXMsg, _BlOnCqeSockMustSendVec, bufVec, bufCnt)
 }
 
-INLINE bool BlDoSockMustSendVec(BlSockMustSendVec_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockMustSendVec(BlSockMustSendVec_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	SOCKET sock;
 	void* buf;
@@ -312,7 +312,7 @@ INLINE void BlInitSockRecv(BlSockRecv_t* io, SOCKET sock, void* buf, uint32_t le
 	io->flags = flags;
 }
 
-INLINE bool BlDoSockRecv(BlSockRecv_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockRecv(BlSockRecv_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
 	_BlSockMsgMembers
@@ -323,7 +323,7 @@ INLINE void BlInitSockRecvVec(BlSockRecvVec_t* io, SOCKET sock,
 	_BLAIOMSG_INIT(_BlOnSqeSockRecvXMsg, _BlOnCqeAio, bufVec, bufCnt)
 }
 
-INLINE bool BlDoSockRecvVec(BlSockRecvVec_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockRecvVec(BlSockRecvVec_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
 	_BlSockMsgMembers
@@ -344,7 +344,7 @@ INLINE void BlInitSockRecvFrom(BlSockRecvFrom_t* io, SOCKET sock, struct sockadd
 	io->addrLen = addrLen;
 }
 
-INLINE bool BlDoSockRecvFrom(BlSockRecvFrom_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockRecvFrom(BlSockRecvFrom_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
 	_BlSockMsgMembers
@@ -362,10 +362,10 @@ INLINE void BlInitSockRecvVecFrom(BlSockRecvVecFrom_t* io, SOCKET sock, struct s
 	io->addrLen = addrLen;
 }
 
-INLINE bool BlDoSockRecvVecFrom(BlSockRecvVecFrom_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockRecvVecFrom(BlSockRecvVecFrom_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	SOCKET sock;
 	void* buf;
@@ -385,7 +385,7 @@ INLINE void BlInitSockMustRecv(BlSockMustRecv_t* io, SOCKET sock,
 	io->flags = flags;
 }
 
-INLINE bool BlDoSockMustRecv(BlSockMustRecv_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockMustRecv(BlSockMustRecv_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
 	_BlSockMsgMembers
@@ -398,11 +398,11 @@ INLINE void BlInitSockMustRecvVec(BlSockMustRecvVec_t* io, SOCKET sock,
 	_BLAIOMSG_INIT(_BlOnSqeSockRecvXMsg, _BlOnCqeSockMustRecvVec, bufVec, bufCnt)
 }
 
-INLINE bool BlDoSockMustRecvVec(BlSockMustRecvVec_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoSockMustRecvVec(BlSockMustRecvVec_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	SOCKET sock;
 } BlTcpClose_t;
@@ -414,10 +414,10 @@ INLINE void BlInitTcpClose(BlTcpClose_t* io, SOCKET sock, BlOnCompletedAio onCom
 	io->sock = sock;
 }
 
-INLINE bool BlDoTcpClose(BlTcpClose_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoTcpClose(BlTcpClose_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	SOCKET sock;
 	int how;
@@ -431,11 +431,11 @@ INLINE void BlInitTcpShutdown(BlTcpShutdown_t* io, SOCKET sock, int how, BlOnCom
 	io->how = how;
 }
 
-INLINE bool BlDoTcpShutdown(BlTcpShutdown_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoTcpShutdown(BlTcpShutdown_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	uint64_t offset;
 	int f;
@@ -454,10 +454,10 @@ INLINE void BlInitFileRead(BlFileRead_t* io, int f, uint64_t offset,
 	io->bufLen = len;
 }
 
-INLINE bool BlDoFileRead(BlFileRead_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoFileRead(BlFileRead_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	uint64_t offset;
 	int f;
@@ -476,10 +476,10 @@ INLINE void BlInitFileReadVec(BlFileReadVec_t* io, int f, uint64_t offset,
 	io->bufCnt = bufCnt;
 }
 
-INLINE bool BlDoFileReadVec(BlFileReadVec_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoFileReadVec(BlFileReadVec_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	uint64_t offset;
 	int f;
@@ -498,10 +498,10 @@ INLINE void BlInitFileWrite(BlFileWrite_t* io, int f, uint64_t offset,
 	io->bufLen = len;
 }
 
-INLINE bool BlDoFileWrite(BlFileWrite_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoFileWrite(BlFileWrite_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 typedef struct {
-	_BlAioBase base;
+	BlAioBase base;
 
 	uint64_t offset;
 	int f;
@@ -520,7 +520,7 @@ INLINE void BlInitFileWriteVec(BlFileWriteVec_t* io, int f, uint64_t offset,
 	io->bufCnt = bufCnt;
 }
 
-INLINE bool BlDoFileWriteVec(BlFileWriteVec_t* io) { return _BlDoAio((_BlAioBase*)io); }
+INLINE bool BlDoFileWriteVec(BlFileWriteVec_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 #ifdef __cplusplus
 }

@@ -94,7 +94,7 @@ void _BlIoLoop(size_t slot) {
 	int err;
 	DWORD bytesXfer;
 	ULONG_PTR perHandle;
-	_BlAioBase* lazyio;
+	BlAioBase* lazyio;
 	OVERLAPPED_ENTRY ovEntry;
 	ULONG nEntries = 0;
 	ReleaseSemaphore(s_initSema, 1, NULL);
@@ -116,7 +116,7 @@ void _BlIoLoop(size_t slot) {
 			continue;
 		bytesXfer = ovEntry.dwNumberOfBytesTransferred;
 		perHandle = ovEntry.lpCompletionKey;
-		lazyio = (_BlAioBase*)ovEntry.lpOverlapped;
+		lazyio = (BlAioBase*)ovEntry.lpOverlapped;
 
 		if (perHandle == BL_kSocket)
 			lazyio->internalOnCompleted(lazyio, err, bytesXfer);

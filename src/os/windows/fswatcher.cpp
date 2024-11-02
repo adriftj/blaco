@@ -14,7 +14,7 @@ struct FileWatcherInfo {
 };
 
 struct tagBlFileContentWatcher {
-	_BlAioBase base;
+	BlAioBase base;
 	uint64_t refCnt;
 	int delay;
 	HANDLE hDir;

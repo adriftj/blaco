@@ -231,7 +231,7 @@ TEST_CASE("test mco echo server ipv4") {
 	for (int i = 0; i < 2; ++i)
 		coros[i] = echoclient(AF_INET, i);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	//REQUIRE(BlCancelIo(sockListen) == 0);
+	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
 	for (int i = 0; i < 2; ++i)
 		mco_destroy(coros[i]);
 	BlExitNotify();
@@ -246,7 +246,7 @@ TEST_CASE("test mco echo server ipv6") {
 	for (int i = 0; i < 2; ++i)
 		coros[i] = echoclient(AF_INET6, i);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	//REQUIRE(BlCancelIo(sockListen) == 0);
+	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
 	for (int i = 0; i < 2; ++i)
 		mco_destroy(coros[i]);
 	BlExitNotify();
@@ -261,7 +261,7 @@ TEST_CASE("test mco echo server unix domain socket") {
 	for (int i = 0; i < 2; ++i)
 		coros[i] = echoclient(AF_UNIX, i);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	//REQUIRE(BlCancelIo(sockListen) == 0);
+	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
 	for (int i = 0; i < 2; ++i)
 		mco_destroy(coros[i]);
 	BlExitNotify();

@@ -131,7 +131,7 @@ TEST_CASE("test echo server ipv4") {
 	for (int i = 0; i < 2; ++i)
 		bl::go(echoclient(AF_INET, i).get_handle());
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	//REQUIRE(BlCancelIo(sockListen) == 0);
+	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
 	BlExitNotify();
 	BlWaitExited();
 	BlSockClose(sockListen);
@@ -143,7 +143,7 @@ TEST_CASE("test echo server ipv6") {
 	for (int i = 0; i < 2; ++i)
 		bl::go(echoclient(AF_INET6, i).get_handle());
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	//REQUIRE(BlCancelIo(sockListen) == 0);
+	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
 	BlExitNotify();
 	BlWaitExited();
 	BlSockClose(sockListen);
@@ -155,7 +155,7 @@ TEST_CASE("test echo server unix domain socket") {
 	for (int i = 0; i < 2; ++i)
 		bl::go(echoclient(AF_UNIX, i).get_handle());
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	//REQUIRE(BlCancelIo(sockListen) == 0);
+	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
 	BlExitNotify();
 	BlWaitExited();
 	BlSockClose(sockListen);

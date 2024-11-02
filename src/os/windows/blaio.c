@@ -12,7 +12,7 @@ void _BlInternalOnCompletedTcpConnect(BlTcpConnect_t* io, int err, DWORD unused)
 		io->base.onCompleted(io->base.coro);
 }
 
-void _BlInternalOnCompletedXfer(_BlAioBase* io, int err, DWORD nXfer) {
+void _BlInternalOnCompletedXfer(BlAioBase* io, int err, DWORD nXfer) {
 	io->ret = err == 0 ? nXfer : -err;
 	if (io->onCompleted)
 		io->onCompleted(io->coro);
@@ -45,7 +45,7 @@ void _BlInternalOnCompletedTcpClose(BlTcpClose_t* io, int err, DWORD unused) {
 		io->base.onCompleted(io->base.coro);
 }
 
-void _BlInternalOnCompletedAioRetInt(_BlAioBase* io, int err, DWORD unused) {
+void _BlInternalOnCompletedAioRetInt(BlAioBase* io, int err, DWORD unused) {
 	io->ret = err;
 	if (io->onCompleted)
 		io->onCompleted(io->coro);
