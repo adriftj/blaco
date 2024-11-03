@@ -2,14 +2,14 @@
 #include "mcoaio.h"
 
 typedef struct {
-	SOCKET sock;
+	int sock;
 	sa_family_t family;
 	McoFnStartSession fn;
 	const McoTcpServerOptions* opts;
 } McoTcpAcceptLoopParm;
 
 typedef struct {
-	SOCKET sock;
+	int sock;
 	BlSockAddr peer;
 	McoFnStartSession fn;
 	const McoTcpServerOptions* opts;
@@ -27,7 +27,7 @@ INLINE void Tlog(McoFnLog fnLog, void* logger, const char* s, int r) {
 
 static void McoTcpAcceptLoop(mco_coro* coro) {
 	McoTcpAcceptLoopParm* parm = (McoTcpAcceptLoopParm*)coro->storage;
-	SOCKET aSock;
+	int aSock;
 	BlSockAddr peer;
 	socklen_t peerLen;
 	mco_coro* coroSession;
@@ -66,7 +66,7 @@ static McoTcpServerOptions s_defaultServerOptions = {
 	NULL   // logger
 };
 
-void McoTcpStartServer(SOCKET sock, sa_family_t family,
+void McoTcpStartServer(int sock, sa_family_t family,
 		McoFnStartSession fn, void* fnParm, const McoTcpServerOptions* opts) {
 	if (!opts)
 		opts = &s_defaultServerOptions;

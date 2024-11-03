@@ -136,17 +136,17 @@ void _BlIoLoop(size_t slot) {
 	}
 }
 
-SOCKET BlSockCreate(sa_family_t family, int sockType, int protocol) {
-	SOCKET sock = WSASocket(family, sockType, protocol, NULL, 0, WSA_FLAG_OVERLAPPED);
-	if (sock != INVALID_SOCKET) {
-		if (g_hIocp != CreateIoCompletionPort((HANDLE)sock, g_hIocp, BL_kSocket, 0)) {
+int BlSockCreate(sa_family_t family, int sockType, int protocol) {
+	int sock = WSASocket(family, sockType, protocol, NULL, 0, WSA_FLAG_OVERLAPPED);
+	if (sock >= 0) {
+		if (g_hIocp != CreateIoCompletionPort((HANDLE)(intptr_t)sock, g_hIocp, BL_kSocket, 0)) {
 			int err = BlGetLastError();
 			BlSockClose(sock);
 			BlSetLastError(err);
-			return INVALID_SOCKET;
+			return -1;
 		}
 		if (s_canSocketSkipNotify.contains({family, sockType, protocol}))
-			SetFileCompletionNotificationModes((HANDLE)sock, FILE_SKIP_SET_EVENT_ON_HANDLE | FILE_SKIP_COMPLETION_PORT_ON_SUCCESS);
+			SetFileCompletionNotificationModes((HANDLE)(intptr_t)sock, FILE_SKIP_SET_EVENT_ON_HANDLE | FILE_SKIP_COMPLETION_PORT_ON_SUCCESS);
 	}
 	return sock;
 }
@@ -217,10 +217,7 @@ int BlFileOpen(const char* fileName, int flags, int mode) {
 	WCHAR* pathw = _BlUtf8PathToWCHAR(fileName, -1, NULL);
 	if (!pathw) {
 		SetLastError(ERROR_INVALID_PARAMETER);
-#pragma warning(push)
-#pragma warning(disable: 4311)
-		return (int)INVALID_HANDLE_VALUE;
-#pragma warning(pop)
+		return -1;
 	}
 	int f = BlFileOpenN(pathw, flags, mode);
 	free(pathw);
@@ -392,8 +389,5 @@ int BlFileOpenN(const WCHAR* fileName, int flags, int mode) {
 	}
 
 	SetFileCompletionNotificationModes(file, FILE_SKIP_SET_EVENT_ON_HANDLE | FILE_SKIP_COMPLETION_PORT_ON_SUCCESS);
-#pragma warning(push)
-#pragma warning(disable: 4311)
-	return (int)file;
-#pragma warning(pop)
+	return (int)(intptr_t)file;
 }

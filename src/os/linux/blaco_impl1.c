@@ -1,6 +1,6 @@
 #include "blaio.h"
 
-int BlSockSetKeepAliveVals(SOCKET sock, bool onoff, uint32_t keepAliveTime, uint32_t keepAliveInterval) {
+int BlSockSetKeepAliveVals(int sock, bool onoff, uint32_t keepAliveTime, uint32_t keepAliveInterval) {
 	int ret;
 	int count;
 	ret = setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (SOCKPARM)&onoff, sizeof(onoff));

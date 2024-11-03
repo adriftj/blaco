@@ -124,7 +124,7 @@ static void Log(void* /*logger*/, const char* s, int r) {
 	fprintf(stderr, "[%d]%s\n", r, s);
 }
 
-static void echo(SOCKET sock, const struct sockaddr* peer, void*, const McoTcpServerOptions* opts) {
+static void echo(int sock, const struct sockaddr* peer, void*, const McoTcpServerOptions* opts) {
 	char buf[1024];
 	size_t n = sizeof(buf);
 	REQUIRE(0 == BlSockAddr2Str(peer, buf, n, false));
@@ -155,9 +155,9 @@ static void echo(SOCKET sock, const struct sockaddr* peer, void*, const McoTcpSe
 
 const char* echo_test_unix_server_path2 = "./echo_test_unix";
 
-static SOCKET echoserver(sa_family_t family, size_t n) {
+static int echoserver(sa_family_t family, size_t n) {
 	std::cout << "Echo server started in thread " << std::this_thread::get_id() << std::endl;
-	SOCKET sockListen;
+	int sockListen;
 	if (family == AF_INET || family == AF_INET6) {
 		BlSockAddr addr;
 		BlGenSockAddrPort(28629, family == AF_INET6, &addr.sa);
@@ -167,7 +167,7 @@ static SOCKET echoserver(sa_family_t family, size_t n) {
 		REQUIRE(family == AF_UNIX);
 		sockListen = BlUnixNewServer(echo_test_unix_server_path2, true, 100);
 	}
-	REQUIRE(sockListen != INVALID_SOCKET);
+	REQUIRE(sockListen >= 0);
 	auto opts = new McoTcpServerOptions{n, 0, Log, NULL};
 	McoTcpStartServer(sockListen, family, echo, NULL, opts);
 	return sockListen;
@@ -183,7 +183,7 @@ static void CoEchoClient(mco_coro* coro) {
 	sa_family_t family = parm->family;
 	int i = parm->i;
 	std::cout << "Client " << i << " started in the thread " << std::this_thread::get_id() << std::endl;
-	SOCKET sock;
+	int sock;
 	BlSockAddr srvAddr;
 	if (family == AF_INET || family == AF_INET6) {
 		sock = BlSockTcp(family == AF_INET6);
@@ -195,7 +195,7 @@ static void CoEchoClient(mco_coro* coro) {
 		sock = BlSockUnix();
 		BlGenUnixSockAddr(&srvAddr, echo_test_unix_server_path2);
 	}
-	REQUIRE(sock != INVALID_SOCKET);
+	REQUIRE(sock >= 0);
 	char buf[128];
 	BlSockAddr2Str(&srvAddr.sa, buf, sizeof(buf), false);
 	std::cout << "Connecting " << buf << std::endl;
@@ -234,7 +234,7 @@ static mco_coro* echoclient(sa_family_t family, int i) {
 
 TEST_CASE("test mco echo server ipv4") {
 	BlInit(0, 0, 0);
-	SOCKET sockListen = echoserver(AF_INET, 2);
+	int sockListen = echoserver(AF_INET, 2);
 	mco_coro* coros[2];
 	for (int i = 0; i < 2; ++i)
 		coros[i] = echoclient(AF_INET, i);
@@ -249,7 +249,7 @@ TEST_CASE("test mco echo server ipv4") {
 
 TEST_CASE("test mco echo server ipv6") {
 	BlInit(0, 0, 0);
-	SOCKET sockListen = echoserver(AF_INET6, 2);
+	int sockListen = echoserver(AF_INET6, 2);
 	mco_coro* coros[2];
 	for (int i = 0; i < 2; ++i)
 		coros[i] = echoclient(AF_INET6, i);
@@ -264,7 +264,7 @@ TEST_CASE("test mco echo server ipv6") {
 
 TEST_CASE("test mco echo server unix domain socket") {
 	BlInit(0, 0, 0);
-	SOCKET sockListen = echoserver(AF_UNIX, 2);
+	int sockListen = echoserver(AF_UNIX, 2);
 	mco_coro* coros[2];
 	for (int i = 0; i < 2; ++i)
 		coros[i] = echoclient(AF_UNIX, i);
@@ -280,8 +280,8 @@ TEST_CASE("test mco echo server unix domain socket") {
 static void udp_receiver(mco_coro*) {
 	BlSockAddr addr;
 	BlGenSockAddrPort(43217, false, &addr.sa);
-	SOCKET sockR = BlUdpNewPeerReceiver(&addr.sa, true);
-	REQUIRE(sockR != INVALID_SOCKET);
+	int sockR = BlUdpNewPeerReceiver(&addr.sa, true);
+	REQUIRE(sockR >= 0);
 	char buf[128];
 	size_t n = sizeof(buf);
 	int nRecv, nSend;
@@ -300,8 +300,8 @@ static void udp_receiver(mco_coro*) {
 static void udp_sender(mco_coro*) {
 	BlSockAddr srvAddr;
 	BlParseSockAddr2("127.0.0.1", -1, 43217, &srvAddr.sa, sizeof(srvAddr));
-	SOCKET sockS = BlUdpNewPeerSender(&srvAddr.sa);
-	REQUIRE(sockS != INVALID_SOCKET);
+	int sockS = BlUdpNewPeerSender(&srvAddr.sa);
+	REQUIRE(sockS >= 0);
 	char buf[128] = "Haha, this is sender speak!";
 	size_t n = strlen(buf);
 	int rev = BlSockPoll(sockS, POLLWRNORM, 0);
@@ -342,8 +342,8 @@ TEST_CASE("test mco udp 1") {
 static void udp_receiver2(mco_coro*) {
 	BlSockAddr addr;
 	BlGenSockAddrPort(43217, false, &addr.sa);
-	SOCKET sockR = BlUdpNewPeerReceiver(&addr.sa, true);
-	REQUIRE(sockR != INVALID_SOCKET);
+	int sockR = BlUdpNewPeerReceiver(&addr.sa, true);
+	REQUIRE(sockR >= 0);
 	char buf[128];
 	iovec bufs[2] = { { buf, 16 }, { buf + 32, sizeof(buf) - 32 } };
 	socklen_t addrLen = sizeof(addr);
@@ -377,8 +377,8 @@ static void CollectIoVec(char* dst, iovec* bufs, size_t bufCnt, size_t nTotal) {
 static void udp_sender2(mco_coro*) {
 	BlSockAddr srvAddr;
 	BlParseSockAddr2("127.0.0.1", -1, 43217, &srvAddr.sa, sizeof(srvAddr));
-	SOCKET sockS = BlUdpNewPeerSender(&srvAddr.sa);
-	REQUIRE(sockS != INVALID_SOCKET);
+	int sockS = BlUdpNewPeerSender(&srvAddr.sa);
+	REQUIRE(sockS >= 0);
 	char buf1[] = "Haha, this is mco sender speak(part1)!";
 	size_t n1 = strlen(buf1);
 	char buf2[] = "Using mco scatter/gather i/o with iovec data here(part2)";

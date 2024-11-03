@@ -46,7 +46,7 @@ INLINE int BlFileClose(int f) {
 	return close(f);
 }
 
-INLINE int BlSockPoll(SOCKET sock, short events, int timeout) {
+INLINE int BlSockPoll(int sock, short events, int timeout) {
 	struct pollfd fds = { sock, events, 0 };
 	int r = poll(&fds, 1, timeout);
 	return r > 0 ? fds.revents : r;
@@ -75,33 +75,33 @@ INLINE bool BlWaitEventForTime(BlEvent ev, uint32_t t) {
 	return false;
 }
 
-INLINE SOCKET BlSockCreate(sa_family_t family, int sockType, int protocol) {
+INLINE int BlSockCreate(sa_family_t family, int sockType, int protocol) {
 	return socket(family, sockType, protocol);
 }
 
-INLINE SOCKET BlSockRaw(int protocol, bool ipv6) {
+INLINE int BlSockRaw(int protocol, bool ipv6) {
 	return BlSockCreate(ipv6? AF_INET6: AF_INET, SOCK_RAW, protocol);
 }
 
-INLINE SOCKET BlSockTcp(bool ipv6) {
+INLINE int BlSockTcp(bool ipv6) {
 	return BlSockCreate(ipv6? AF_INET6: AF_INET, SOCK_STREAM, IPPROTO_TCP);
 }
 
-INLINE SOCKET BlSockUdp(bool ipv6) {
+INLINE int BlSockUdp(bool ipv6) {
 	return BlSockCreate(ipv6? AF_INET6: AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 }
 
-INLINE SOCKET BlSockUdpLite(bool ipv6) {
+INLINE int BlSockUdpLite(bool ipv6) {
 	return BlSockCreate(ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, 136);
 }
 
 #ifdef SUPPORT_AF_UNIX
-INLINE SOCKET BlSockUnix() {
+INLINE int BlSockUnix() {
 	return BlSockCreate(AF_UNIX, SOCK_STREAM, 0);
 }
 #endif
 
-INLINE int BlSockClose(SOCKET sock) {
+INLINE int BlSockClose(int sock) {
 	return close(sock);
 }
 
@@ -138,14 +138,14 @@ bool _BlDoAio(BlAioBase* io);
 typedef struct {
 	BlAioBase base;
 
-	SOCKET listenSock;
+	int listenSock;
 	struct sockaddr* peer;
 	socklen_t* peerLen;
 } BlTcpAccept_t;
 
 void _BlOnSqeTcpAccept(BlTcpAccept_t* io, struct io_uring_sqe* sqe);
 
-INLINE void BlInitTcpAccept(BlTcpAccept_t* io, SOCKET sock, sa_family_t unused,
+INLINE void BlInitTcpAccept(BlTcpAccept_t* io, int sock, sa_family_t unused,
 		struct sockaddr* peer, socklen_t* peerLen, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlOnSqeTcpAccept, _BlOnCqeAio)
 	io->listenSock = sock;
@@ -159,13 +159,13 @@ INLINE bool BlDoTcpAccept(BlTcpAccept_t* io) { return _BlDoAio((BlAioBase*)io); 
 typedef struct {
 	BlAioBase base;
 
-	SOCKET sock;
+	int sock;
 	const struct sockaddr* addr;
 } BlTcpConnect_t;
 
 void _BlOnSqeTcpConnect(BlTcpConnect_t* io, struct io_uring_sqe* sqe);
 
-INLINE void BlInitTcpConnect(BlTcpConnect_t* io, SOCKET sock, const struct sockaddr* addr, BlOnCompletedAio onCompleted) {
+INLINE void BlInitTcpConnect(BlTcpConnect_t* io, int sock, const struct sockaddr* addr, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlOnSqeTcpConnect, _BlOnCqeAio)
 	io->sock = sock;
 	io->addr = addr;
@@ -177,7 +177,7 @@ INLINE bool BlDoTcpConnect(BlTcpConnect_t* io) { return _BlDoAio((BlAioBase*)io)
 typedef struct {
 	BlAioBase base;
 
-	SOCKET sock;
+	int sock;
 	const void* buf;
 	uint32_t len;
 	int flags;
@@ -185,7 +185,7 @@ typedef struct {
 
 void _BlOnSqeSockSend(BlSockSend_t* io, struct io_uring_sqe* sqe);
 
-INLINE void BlInitSockSend(BlSockSend_t* io, SOCKET sock, const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
+INLINE void BlInitSockSend(BlSockSend_t* io, int sock, const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlOnSqeSockSend, _BlOnCqeAio)
 	io->sock = sock;
 	io->buf = buf;
@@ -197,7 +197,7 @@ INLINE bool BlDoSockSend(BlSockSend_t* io) { return _BlDoAio((BlAioBase*)io); }
 
 #define _BlSockMsgMembers \
 	BlAioBase base;      \
-	SOCKET sock;          \
+	int sock;          \
 	struct msghdr msghdr; \
 	int flags;
 
@@ -220,7 +220,7 @@ typedef struct {
 	_BlSockMsgMembers
 } BlSockSendVec_t;
 
-INLINE void BlInitSockSendVec(BlSockSendVec_t* io, SOCKET sock,
+INLINE void BlInitSockSendVec(BlSockSendVec_t* io, int sock,
 	const struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOMSG_INIT(_BlOnSqeSockSendXMsg, _BlOnCqeAio, bufVec, bufCnt)
 }
@@ -232,7 +232,7 @@ typedef struct {
 	struct iovec buf;
 } BlSockSendTo_t;
 
-INLINE void BlInitSockSendTo(BlSockSendTo_t* io, SOCKET sock, const struct sockaddr* addr,
+INLINE void BlInitSockSendTo(BlSockSendTo_t* io, int sock, const struct sockaddr* addr,
 	const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOMSG_INIT(_BlOnSqeSockSendXMsg, _BlOnCqeAio, &io->buf, 1)
 	io->buf.iov_base = (void*)buf;
@@ -247,7 +247,7 @@ typedef struct {
 	_BlSockMsgMembers
 } BlSockSendVecTo_t;
 
-INLINE void BlInitSockSendVecTo(BlSockSendVecTo_t* io, SOCKET sock, const struct sockaddr* addr,
+INLINE void BlInitSockSendVecTo(BlSockSendVecTo_t* io, int sock, const struct sockaddr* addr,
 	const struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOMSG_INIT(_BlOnSqeSockSendXMsg, _BlOnCqeAio, bufVec, bufCnt)
 	io->msghdr.msg_name = (struct sockaddr*)addr;
@@ -259,7 +259,7 @@ INLINE bool BlDoSockSendVecTo(BlSockSendVecTo_t* io) { return _BlDoAio((BlAioBas
 typedef struct {
 	BlAioBase base;
 
-	SOCKET sock;
+	int sock;
 	const void* buf;
 	uint32_t len;
 	int flags;
@@ -268,7 +268,7 @@ typedef struct {
 void _BlOnSqeSockMustSend(BlSockMustSend_t* io, struct io_uring_sqe* sqe);
 void _BlOnCqeSockMustSend(BlSockMustSend_t* io, int r);
 
-INLINE void BlInitSockMustSend(BlSockMustSend_t* io, SOCKET sock,
+INLINE void BlInitSockMustSend(BlSockMustSend_t* io, int sock,
 	const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlOnSqeSockMustSend, _BlOnCqeSockMustSend)
 	io->sock = sock;
@@ -285,7 +285,7 @@ typedef struct {
 
 void _BlOnCqeSockMustSendVec(BlSockMustSendVec_t* io, int r);
 
-INLINE void BlInitSockMustSendVec(BlSockMustSendVec_t* io, SOCKET sock,
+INLINE void BlInitSockMustSendVec(BlSockMustSendVec_t* io, int sock,
 	const struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOMSG_INIT(_BlOnSqeSockSendXMsg, _BlOnCqeSockMustSendVec, bufVec, bufCnt)
 }
@@ -296,7 +296,7 @@ INLINE bool BlDoSockMustSendVec(BlSockMustSendVec_t* io) { return _BlDoAio((BlAi
 typedef struct {
 	BlAioBase base;
 
-	SOCKET sock;
+	int sock;
 	void* buf;
 	uint32_t len;
 	int flags;
@@ -304,7 +304,7 @@ typedef struct {
 
 void _BlOnSqeSockRecv(BlSockRecv_t* io, struct io_uring_sqe* sqe);
 
-INLINE void BlInitSockRecv(BlSockRecv_t* io, SOCKET sock, void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
+INLINE void BlInitSockRecv(BlSockRecv_t* io, int sock, void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlOnSqeSockRecv, _BlOnCqeAio)
 	io->sock = sock;
 	io->buf = buf;
@@ -318,7 +318,7 @@ typedef struct {
 	_BlSockMsgMembers
 } BlSockRecvVec_t;
 
-INLINE void BlInitSockRecvVec(BlSockRecvVec_t* io, SOCKET sock,
+INLINE void BlInitSockRecvVec(BlSockRecvVec_t* io, int sock,
 	struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOMSG_INIT(_BlOnSqeSockRecvXMsg, _BlOnCqeAio, bufVec, bufCnt)
 }
@@ -333,7 +333,7 @@ typedef struct {
 
 void _BlOnCqeSockRecvFrom(BlSockRecvFrom_t* io, int r);
 
-INLINE void BlInitSockRecvFrom(BlSockRecvFrom_t* io, SOCKET sock, struct sockaddr* addr, socklen_t* addrLen,
+INLINE void BlInitSockRecvFrom(BlSockRecvFrom_t* io, int sock, struct sockaddr* addr, socklen_t* addrLen,
 	void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOMSG_INIT(_BlOnSqeSockRecvXMsg, _BlOnCqeSockRecvFrom, &io->buf, 1)
 	io->buf.iov_base = buf;
@@ -353,7 +353,7 @@ typedef struct {
 
 void _BlOnCqeSockRecvVecFrom(BlSockRecvVecFrom_t* io, int r);
 
-INLINE void BlInitSockRecvVecFrom(BlSockRecvVecFrom_t* io, SOCKET sock, struct sockaddr* addr, socklen_t* addrLen,
+INLINE void BlInitSockRecvVecFrom(BlSockRecvVecFrom_t* io, int sock, struct sockaddr* addr, socklen_t* addrLen,
 	struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOMSG_INIT(_BlOnSqeSockRecvXMsg, _BlOnCqeSockRecvVecFrom, bufVec, bufCnt)
 	io->msghdr.msg_name = addr;
@@ -367,7 +367,7 @@ INLINE bool BlDoSockRecvVecFrom(BlSockRecvVecFrom_t* io) { return _BlDoAio((BlAi
 typedef struct {
 	BlAioBase base;
 
-	SOCKET sock;
+	int sock;
 	void* buf;
 	uint32_t len;
 	int flags;
@@ -376,7 +376,7 @@ typedef struct {
 void _BlOnSqeSockMustRecv(BlSockMustRecv_t* io, struct io_uring_sqe* sqe);
 void _BlOnCqeSockMustRecv(BlSockMustRecv_t* io, int r);
 
-INLINE void BlInitSockMustRecv(BlSockMustRecv_t* io, SOCKET sock,
+INLINE void BlInitSockMustRecv(BlSockMustRecv_t* io, int sock,
 	void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlOnSqeSockMustRecv, _BlOnCqeSockMustRecv)
 	io->sock = sock;
@@ -393,7 +393,7 @@ typedef struct {
 
 void _BlOnCqeSockMustRecvVec(BlSockMustRecvVec_t* io, int r);
 
-INLINE void BlInitSockMustRecvVec(BlSockMustRecvVec_t* io, SOCKET sock,
+INLINE void BlInitSockMustRecvVec(BlSockMustRecvVec_t* io, int sock,
 	struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOMSG_INIT(_BlOnSqeSockRecvXMsg, _BlOnCqeSockMustRecvVec, bufVec, bufCnt)
 }
@@ -404,12 +404,12 @@ INLINE bool BlDoSockMustRecvVec(BlSockMustRecvVec_t* io) { return _BlDoAio((BlAi
 typedef struct {
 	BlAioBase base;
 
-	SOCKET sock;
+	int sock;
 } BlTcpClose_t;
 
 void _BlOnSqeTcpClose(BlTcpClose_t* io, struct io_uring_sqe* sqe);
 
-INLINE void BlInitTcpClose(BlTcpClose_t* io, SOCKET sock, BlOnCompletedAio onCompleted) {
+INLINE void BlInitTcpClose(BlTcpClose_t* io, int sock, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlOnSqeTcpClose, _BlOnCqeAio)
 	io->sock = sock;
 }
@@ -419,13 +419,13 @@ INLINE bool BlDoTcpClose(BlTcpClose_t* io) { return _BlDoAio((BlAioBase*)io); }
 typedef struct {
 	BlAioBase base;
 
-	SOCKET sock;
+	int sock;
 	int how;
 } BlTcpShutdown_t;
 
 void _BlOnSqeTcpShutdown(BlTcpShutdown_t* io, struct io_uring_sqe* sqe);
 
-INLINE void BlInitTcpShutdown(BlTcpShutdown_t* io, SOCKET sock, int how, BlOnCompletedAio onCompleted) {
+INLINE void BlInitTcpShutdown(BlTcpShutdown_t* io, int sock, int how, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlOnSqeTcpShutdown, _BlOnCqeAio)
 	io->sock = sock;
 	io->how = how;

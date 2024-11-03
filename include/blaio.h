@@ -321,48 +321,48 @@ bool BlDnsDoQuery(BlDnsAio* io);
 * @param protocol
 * @param ipv6 false for ipv4
 * @return the created socket
-*   @retval INVALID_SOCKET failed, call BlGetLastError() for error code
+*   @retval <0 failed, call BlGetLastError() for error code
 *   @retval other created ok
 */
-SOCKET BlSockRaw(int protocol, bool ipv6);
+int BlSockRaw(int protocol, bool ipv6);
 
 /*
 * @brief Create a TCP socket
 * @param ipv6 false for ipv4
 * @return the created socket
-*   @retval INVALID_SOCKET failed, call BlGetLastError() for error code
+*   @retval <0 failed, call BlGetLastError() for error code
 *   @retval other created ok
 * @note TODO: should setsockopt(SOL_SOCKET, SO_NOSIGPIPE) in linux
 */
-SOCKET BlSockTcp(bool ipv6);
+int BlSockTcp(bool ipv6);
 
 /*
 * @brief Create a UDP socket
 * @param ipv6 false for ipv4
 * @return the created socket
-*   @retval INVALID_SOCKET failed, call BlGetLastError() for error code
+*   @retval <0 failed, call BlGetLastError() for error code
 *   @retval other created ok
 */
-SOCKET BlSockUdp(bool ipv6);
+int BlSockUdp(bool ipv6);
 
 /*
 * @brief Create a UDPLite socket
 * @param ipv6 false for ipv4
 * @return the created socket
-*   @retval INVALID_SOCKET failed, call BlGetLastError() for error code
+*   @retval <0 failed, call BlGetLastError() for error code
 *   @retval other created ok
 */
-SOCKET BlSockUdpLite(bool ipv6);
+int BlSockUdpLite(bool ipv6);
 
 #ifdef SUPPORT_AF_UNIX
 
 /*
 * @brief Create an AF_UNIX unix domain socket
 * @return the created socket
-*   @retval INVALID_SOCKET failed, call BlGetLastError() for error code
+*   @retval <0 failed, call BlGetLastError() for error code
 *   @retval other created ok
 */
-SOCKET BlSockUnix();
+int BlSockUnix();
 
 #endif
 
@@ -375,7 +375,7 @@ SOCKET BlSockUnix();
 * @warning If you need to close a connected TCP socket, you should call co_await TcpClose rather than
 *   this function, because it is a block I/O operation.
 */
-int BlSockClose(SOCKET sock);
+int BlSockClose(int sock);
 
 /*
 * @brief Get local address part of a socket
@@ -386,7 +386,7 @@ int BlSockClose(SOCKET sock);
 *   @retval <>0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 */
-INLINE int BlSockGetLocalAddr(SOCKET sock, struct sockaddr* addr, socklen_t* pLen) {
+INLINE int BlSockGetLocalAddr(int sock, struct sockaddr* addr, socklen_t* pLen) {
 	return getsockname(sock, addr, pLen);
 }
 
@@ -401,7 +401,7 @@ INLINE int BlSockGetLocalAddr(SOCKET sock, struct sockaddr* addr, socklen_t* pLe
 * @note DON'T support unix domain socket
 * @warning Some one report that sometimes this call will be blocked on Windows(normally >= 10ms)
 */
-INLINE int BlSockGetPeerAddr(SOCKET sock, struct sockaddr* addr, socklen_t* pLen) {
+INLINE int BlSockGetPeerAddr(int sock, struct sockaddr* addr, socklen_t* pLen) {
 	return getpeername(sock, addr, pLen);
 }
 
@@ -414,7 +414,7 @@ INLINE int BlSockGetPeerAddr(SOCKET sock, struct sockaddr* addr, socklen_t* pLen
 *   @retval =0 ok
 * @note DON'T support unix domain socket
 */
-INLINE int BlSockSetReuseAddr(SOCKET sock, bool onoff) {
+INLINE int BlSockSetReuseAddr(int sock, bool onoff) {
     int opt = (onoff ? 1 : 0);
 	return setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (SOCKPARM)&opt, sizeof(opt));
 }
@@ -428,7 +428,7 @@ INLINE int BlSockSetReuseAddr(SOCKET sock, bool onoff) {
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 */
-INLINE int BlSockSetLinger(SOCKET sock, bool onoff, uint32_t timeoutMSELs) {
+INLINE int BlSockSetLinger(int sock, bool onoff, uint32_t timeoutMSELs) {
     struct linger l;
     l.l_onoff = (u_short)(onoff ? 1 : 0);
     l.l_linger = (u_short)(INFINITE == timeoutMSELs ? 0xffff : ((timeoutMSELs & 0x7FFFFFFF) / 1000));
@@ -445,7 +445,7 @@ INLINE int BlSockSetLinger(SOCKET sock, bool onoff, uint32_t timeoutMSELs) {
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 */
-INLINE int BlSockSetTcpNoDelay(SOCKET sock, bool noDelay) {
+INLINE int BlSockSetTcpNoDelay(int sock, bool noDelay) {
     int val = (noDelay ? 1 : 0); return setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (SOCKPARM)&val, sizeof(val));
 }
 
@@ -457,7 +457,7 @@ INLINE int BlSockSetTcpNoDelay(SOCKET sock, bool noDelay) {
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 */
-INLINE int BlSockSetRecvBufSize(SOCKET sock, socklen_t len) {
+INLINE int BlSockSetRecvBufSize(int sock, socklen_t len) {
     return setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (SOCKPARM)&len, sizeof(len));
 }
 
@@ -469,7 +469,7 @@ INLINE int BlSockSetRecvBufSize(SOCKET sock, socklen_t len) {
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 */
-INLINE int BlSockGetRecvBufSize(SOCKET sock, socklen_t* pLen) {
+INLINE int BlSockGetRecvBufSize(int sock, socklen_t* pLen) {
     socklen_t l = sizeof(*pLen); return getsockopt(sock, SOL_SOCKET, SO_RCVBUF, (SOCKPARM)pLen, &l);
 }
 
@@ -481,7 +481,7 @@ INLINE int BlSockGetRecvBufSize(SOCKET sock, socklen_t* pLen) {
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 */
-INLINE int BlSockSetSendBufSize(SOCKET sock, socklen_t len) {
+INLINE int BlSockSetSendBufSize(int sock, socklen_t len) {
     return setsockopt(sock, SOL_SOCKET, SO_SNDBUF, (SOCKPARM)&len, sizeof(len));
 }
 
@@ -493,7 +493,7 @@ INLINE int BlSockSetSendBufSize(SOCKET sock, socklen_t len) {
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 */
-INLINE int BlSockGetSendBufSize(SOCKET sock, socklen_t* pLen) {
+INLINE int BlSockGetSendBufSize(int sock, socklen_t* pLen) {
     socklen_t l = sizeof(*pLen); return getsockopt(sock, SOL_SOCKET, SO_SNDBUF, (SOCKPARM)pLen, &l);
 }
 
@@ -506,7 +506,7 @@ INLINE int BlSockGetSendBufSize(SOCKET sock, socklen_t* pLen) {
 *   @retval =0 ok
 * @warning No effect in Windows, because timeout isn't be supported in IOCP mode.
 */
-INLINE int BlSockSetRecvTimeout(SOCKET sock, uint32_t timeoutMSELs) {
+INLINE int BlSockSetRecvTimeout(int sock, uint32_t timeoutMSELs) {
     struct timeval timeo;
     if (INFINITE == timeoutMSELs) {
         timeo.tv_sec = 0x7FFFFFFF;
@@ -528,7 +528,7 @@ INLINE int BlSockSetRecvTimeout(SOCKET sock, uint32_t timeoutMSELs) {
 *   @retval =0 ok
 * @warning No effect in Windows, because timeout isn't be supported in IOCP mode.
 */
-INLINE int BlSockSetSendTimeout(SOCKET sock, uint32_t timeoutMSELs) {
+INLINE int BlSockSetSendTimeout(int sock, uint32_t timeoutMSELs) {
     struct timeval timeo;
     if (INFINITE == timeoutMSELs) {
         timeo.tv_sec = 0x7FFFFFFF;
@@ -548,7 +548,7 @@ INLINE int BlSockSetSendTimeout(SOCKET sock, uint32_t timeoutMSELs) {
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 */
-INLINE int BlSockSetBroadcast(SOCKET sock) {
+INLINE int BlSockSetBroadcast(int sock) {
     long val = 1; return setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (SOCKPARM)&val, sizeof(val));
 }
 
@@ -560,7 +560,7 @@ INLINE int BlSockSetBroadcast(SOCKET sock) {
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 */
-INLINE int BlSockSetKeepAlive(SOCKET sock, bool onoff) {
+INLINE int BlSockSetKeepAlive(int sock, bool onoff) {
     return setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (SOCKPARM)&onoff, sizeof(onoff));
 }
 
@@ -574,7 +574,7 @@ INLINE int BlSockSetKeepAlive(SOCKET sock, bool onoff) {
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 */
-int BlSockSetKeepAliveVals(SOCKET sock, bool onoff, uint32_t keepAliveTime, uint32_t keepAliveInterval);
+int BlSockSetKeepAliveVals(int sock, bool onoff, uint32_t keepAliveTime, uint32_t keepAliveInterval);
 
 /*
 * @brief Bind the local address part of a socket
@@ -586,7 +586,7 @@ int BlSockSetKeepAliveVals(SOCKET sock, bool onoff, uint32_t keepAliveTime, uint
 *   @retval =0 ok
 * @note Support unix domain socket
 */
-INLINE int BlSockBind(SOCKET sock, const struct sockaddr* addr) {
+INLINE int BlSockBind(int sock, const struct sockaddr* addr) {
     return bind(sock, addr, BlGetSockAddrLen(addr));
 }
 
@@ -599,7 +599,7 @@ INLINE int BlSockBind(SOCKET sock, const struct sockaddr* addr) {
 *   @retval =0 ok
 * @note Support unix domain socket
 */
-INLINE int BlSockListen(SOCKET sock, int n) {
+INLINE int BlSockListen(int sock, int n) {
     return listen(sock, n);
 }
 
@@ -611,7 +611,7 @@ INLINE int BlSockListen(SOCKET sock, int n) {
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval =0 ok
 */
-INLINE int BlSockConnect(SOCKET sock, const struct sockaddr* addr) {
+INLINE int BlSockConnect(int sock, const struct sockaddr* addr) {
     return connect(sock, addr, BlGetSockAddrLen(addr));
 }
 
@@ -624,7 +624,7 @@ INLINE int BlSockConnect(SOCKET sock, const struct sockaddr* addr) {
 *   @retval <0 failed, call BlGetLastError() for error code
 *   @retval >=0 bit ORs of POLLxx(see linux system call poll)
 */
-int BlSockPoll(SOCKET sock, short events, int timeout);
+int BlSockPoll(int sock, short events, int timeout);
 
 #ifdef __cplusplus
 }
@@ -646,13 +646,13 @@ extern "C" {
 * @param[in] reuseAddr true-reuse, false-don't
 * @param[in] nListen the lenth of listen queue
 * @return the created server socket
-*   @retval INVALID_SOCKET failed, call BlGetLastError() for error code
+*   @retval <0 failed, call BlGetLastError() for error code
 *   @retval other created ok
 * @note DON'T support unix domain socket, @see BlUnixNewServer.
 */
-INLINE SOCKET BlTcpNewServer(const struct sockaddr* addr, bool reuseAddr, int nListen) {
-	SOCKET sock = BlSockTcp(addr->sa_family == AF_INET6);
-	if (sock != INVALID_SOCKET) {
+INLINE int BlTcpNewServer(const struct sockaddr* addr, bool reuseAddr, int nListen) {
+	int sock = BlSockTcp(addr->sa_family == AF_INET6);
+	if (sock >= 0) {
 		int r = BlSockSetReuseAddr(sock, reuseAddr);
 		if (r == 0) {
 			r = BlSockBind(sock, addr);
@@ -666,20 +666,20 @@ INLINE SOCKET BlTcpNewServer(const struct sockaddr* addr, bool reuseAddr, int nL
 		BlSockClose(sock);
 		BlSetLastError(err);
 	}
-	return INVALID_SOCKET;
+	return -1;
 }
 
 /*
 * @brief Create a UDP socket and bind to an local port
 * @param[in] addr internet address(v4 or v6) to bind
 * @return the created socket
-*   @retval INVALID_SOCKET failed, call BlGetLastError() for error code
+*   @retval <0 failed, call BlGetLastError() for error code
 *   @retval other created ok
 * @note DON'T support unix domain socket, @see BlUnixNewServer.
 */
-INLINE SOCKET BlUdpNewPeerReceiver(const struct sockaddr* addr, bool reuseAddr) {
-	SOCKET sock = BlSockUdp(addr->sa_family == AF_INET6);
-	if (sock == INVALID_SOCKET)
+INLINE int BlUdpNewPeerReceiver(const struct sockaddr* addr, bool reuseAddr) {
+	int sock = BlSockUdp(addr->sa_family == AF_INET6);
+	if (sock < 0)
 		return sock;
 	int r = BlSockSetReuseAddr(sock, reuseAddr);
 	if (r == 0) {
@@ -690,20 +690,20 @@ INLINE SOCKET BlUdpNewPeerReceiver(const struct sockaddr* addr, bool reuseAddr) 
 	int err = BlGetLastError();
 	BlSockClose(sock);
 	BlSetLastError(err);
-	return INVALID_SOCKET;
+	return -1;
 }
 
 /*
 * @brief Create a UDP socket and connect to a remote address
 * @param[in] addr internet address(v4 or v6) to connect
 * @return the created socket
-*   @retval INVALID_SOCKET failed, call BlGetLastError() for error code
+*   @retval <0 failed, call BlGetLastError() for error code
 *   @retval other created ok
 * @note DON'T support unix domain socket
 */
-INLINE SOCKET BlUdpNewPeerSender(const struct sockaddr* addr) {
-	SOCKET sock = BlSockUdp(addr->sa_family == AF_INET6);
-	if (sock == INVALID_SOCKET)
+INLINE int BlUdpNewPeerSender(const struct sockaddr* addr) {
+	int sock = BlSockUdp(addr->sa_family == AF_INET6);
+	if (sock < 0)
 		return sock;
 	int r = BlSockConnect(sock, addr);
 	if (r == 0)
@@ -711,10 +711,10 @@ INLINE SOCKET BlUdpNewPeerSender(const struct sockaddr* addr) {
 	int err = BlGetLastError();
 	BlSockClose(sock);
 	BlSetLastError(err);
-	return INVALID_SOCKET;
+	return -1;
 }
 
-INLINE int _BlSockAddDropMemberShip(SOCKET sock, const struct sockaddr* addr,
+INLINE int _BlSockAddDropMemberShip(int sock, const struct sockaddr* addr,
 	const struct sockaddr* nicAddr, int addOrDrop) {
 	int level, option_name;
 	void const* option_value;
@@ -778,7 +778,7 @@ INLINE int _BlSockAddDropMemberShip(SOCKET sock, const struct sockaddr* addr,
 * @param[in] nicAddr NULL-use default NIC, else-use that NIC
 * @note DON'T support unix domain socket
 */
-INLINE int BlSockAddMemberShip(SOCKET sock, const struct sockaddr* addr, const struct sockaddr* nicAddr) {
+INLINE int BlSockAddMemberShip(int sock, const struct sockaddr* addr, const struct sockaddr* nicAddr) {
 	return _BlSockAddDropMemberShip(sock, addr, nicAddr, 1);
 }
 
@@ -789,11 +789,11 @@ INLINE int BlSockAddMemberShip(SOCKET sock, const struct sockaddr* addr, const s
 * @param[in] nicAddr NULL-use default NIC, else-use that NIC
 * @note DON'T support unix domain socket
 */
-INLINE int BlSockDropMemberShip(SOCKET sock, const struct sockaddr* addr, const struct sockaddr* nicAddr) {
+INLINE int BlSockDropMemberShip(int sock, const struct sockaddr* addr, const struct sockaddr* nicAddr) {
 	return _BlSockAddDropMemberShip(sock, addr, nicAddr, 0);
 }
 
-INLINE int BlSockSetMulticastIf(SOCKET sock, const struct sockaddr* addr) {
+INLINE int BlSockSetMulticastIf(int sock, const struct sockaddr* addr) {
 	if (!addr) {
 		BlSetLastError(EINVAL);
 		return -1;
@@ -810,7 +810,7 @@ INLINE int BlSockSetMulticastIf(SOCKET sock, const struct sockaddr* addr) {
 * @param[in] ttl_or_hops the multicast hop limit for the socket
 * @note DON'T support unix domain socket
 */
-INLINE int BlSockSetMulticastTtl(SOCKET sock, bool ipv6, int ttl_or_hops) {
+INLINE int BlSockSetMulticastTtl(int sock, bool ipv6, int ttl_or_hops) {
 	int level = ipv6 ? IPPROTO_IPV6 : IPPROTO_IP;
 	int option_name = ipv6? IPV6_MULTICAST_HOPS : IP_MULTICAST_TTL;
 	return setsockopt(sock, level, option_name, (SOCKPARM)&ttl_or_hops, sizeof(ttl_or_hops));
@@ -823,13 +823,13 @@ INLINE int BlSockSetMulticastTtl(SOCKET sock, bool ipv6, int ttl_or_hops) {
 * @param[in] loop 1-the socket sees multicast packets that it has send itself, 0-no
 * @note DON'T support unix domain socket
 */
-INLINE int BlSockSetMulticastLoop(SOCKET sock, bool ipv6, int loop) {
+INLINE int BlSockSetMulticastLoop(int sock, bool ipv6, int loop) {
 	int level = ipv6 ? IPPROTO_IPV6 : IPPROTO_IP;
 	int option_name = ipv6 ? IPV6_MULTICAST_LOOP : IP_MULTICAST_LOOP;
 	return setsockopt(sock, level, option_name, (SOCKPARM)&loop, sizeof(loop));
 }
 
-INLINE int BlSockBindEx(SOCKET sock, const struct sockaddr* addr, const struct sockaddr* nicAddr) {
+INLINE int BlSockBindEx(int sock, const struct sockaddr* addr, const struct sockaddr* nicAddr) {
 	BlSockAddr46 localAddr;
 	sa_family_t family = addr->sa_family;
 	bool ipv6 = (family == AF_INET6);
@@ -849,7 +849,7 @@ INLINE int BlSockBindEx(SOCKET sock, const struct sockaddr* addr, const struct s
 	return BlSockAddMemberShip(sock, addr, nicAddr);
 }
 
-INLINE int BlSockConnectEx(SOCKET sock, const struct sockaddr* addr, const struct sockaddr* nicAddr, int ttl_or_hops, int loop) {
+INLINE int BlSockConnectEx(int sock, const struct sockaddr* addr, const struct sockaddr* nicAddr, int ttl_or_hops, int loop) {
 	int r = connect(sock, addr, BlGetSockAddrLen(addr));
 	if (r < 0)
 		return r;
@@ -865,9 +865,9 @@ INLINE int BlSockConnectEx(SOCKET sock, const struct sockaddr* addr, const struc
 	return BlSockSetMulticastLoop(sock, ipv6, loop);
 }
 
-INLINE SOCKET BlUdpNewPeerReceiverEx(const struct sockaddr* addr, const struct sockaddr* nicAddr, bool reuseAddr) {
-	SOCKET sock = BlSockUdp(addr->sa_family == AF_INET6);
-	if (sock == INVALID_SOCKET)
+INLINE int BlUdpNewPeerReceiverEx(const struct sockaddr* addr, const struct sockaddr* nicAddr, bool reuseAddr) {
+	int sock = BlSockUdp(addr->sa_family == AF_INET6);
+	if (sock < 0)
 		return sock;
 	int r = BlSockSetReuseAddr(sock, reuseAddr);
 	if (r == 0) {
@@ -878,12 +878,12 @@ INLINE SOCKET BlUdpNewPeerReceiverEx(const struct sockaddr* addr, const struct s
 	int err = BlGetLastError();
 	BlSockClose(sock);
 	BlSetLastError(err);
-	return INVALID_SOCKET;
+	return -1;
 }
 
-INLINE SOCKET BlUdpNewPeerSenderEx(const struct sockaddr* addr, const struct sockaddr* nicAddr, int ttl_or_hops, int loop) {
-	SOCKET sock = BlSockUdp(addr->sa_family == AF_INET6);
-	if (sock == INVALID_SOCKET)
+INLINE int BlUdpNewPeerSenderEx(const struct sockaddr* addr, const struct sockaddr* nicAddr, int ttl_or_hops, int loop) {
+	int sock = BlSockUdp(addr->sa_family == AF_INET6);
+	if (sock < 0)
 		return sock;
 	int r = BlSockConnectEx(sock, addr, nicAddr, ttl_or_hops, loop);
 	if (r == 0)
@@ -891,7 +891,7 @@ INLINE SOCKET BlUdpNewPeerSenderEx(const struct sockaddr* addr, const struct soc
 	int err = BlGetLastError();
 	BlSockClose(sock);
 	BlSetLastError(err);
-	return INVALID_SOCKET;
+	return -1;
 }
 
 
@@ -905,7 +905,7 @@ INLINE SOCKET BlUdpNewPeerSenderEx(const struct sockaddr* addr, const struct soc
 *   @retval 0 ok
 *   @retval <>0 failed, call BlGetLastError() for error code
 */
-INLINE int BlUnixBind(SOCKET sock, const char* path) {
+INLINE int BlUnixBind(int sock, const char* path) {
 	BlSockAddr addr;
 	if (!BlGenUnixSockAddr(&addr, path)) {
 		BlSetLastError(EINVAL);
@@ -920,14 +920,14 @@ INLINE int BlUnixBind(SOCKET sock, const char* path) {
 * @param[in] unlinkPath true-unlink path, false-don't
 * @param[in] nListen the lenth of listen queue
 * @return
-*   @retval INVALID_SOCKET failed, call BlGetLastError() for error code
+*   @retval <0 failed, call BlGetLastError() for error code
 *   @retval otherwise ok
 */
-INLINE SOCKET BlUnixNewServer(const char* path, bool unlinkPath, int nListen) {
+INLINE int BlUnixNewServer(const char* path, bool unlinkPath, int nListen) {
 	if (unlinkPath)
 		unlink(path);
-	SOCKET sock = BlSockUnix();
-	if (sock != INVALID_SOCKET) {
+	int sock = BlSockUnix();
+	if (sock >= 0) {
 		int r = BlUnixBind(sock, path);
 		if (r == 0) {
 			r = BlSockListen(sock, nListen);
@@ -938,7 +938,7 @@ INLINE SOCKET BlUnixNewServer(const char* path, bool unlinkPath, int nListen) {
 		BlSockClose(sock);
 		BlSetLastError(err);
 	}
-	return INVALID_SOCKET;
+	return -1;
 }
 
 #endif
@@ -988,7 +988,7 @@ INLINE void IoVecAdjustAfterIo(struct iovec** pbufVec, size_t* pbufCnt, size_t n
 *
 * @note Support unix domain socket
 */
-INLINE bool BlTcpAccept(BlTcpAccept_t* io, SOCKET sock, sa_family_t family,
+INLINE bool BlTcpAccept(BlTcpAccept_t* io, int sock, sa_family_t family,
 	struct sockaddr* peer, socklen_t* peerLen, BlOnCompletedAio onCompleted) {
 	BlInitTcpAccept(io, sock, family, peer, peerLen, onCompleted);
 	return BlDoTcpAccept(io);
@@ -999,7 +999,7 @@ INLINE bool BlTcpAccept(BlTcpAccept_t* io, SOCKET sock, sa_family_t family,
 * 
 * @note Support unix domain socket
 */
-INLINE bool BlTcpConnect(BlTcpConnect_t* io, SOCKET sock,
+INLINE bool BlTcpConnect(BlTcpConnect_t* io, int sock,
 		const struct sockaddr* addr, BlOnCompletedAio onCompleted) {
 	BlInitTcpConnect(io, sock, addr, onCompleted);
 	return BlDoTcpConnect(io);
@@ -1010,7 +1010,7 @@ INLINE bool BlTcpConnect(BlTcpConnect_t* io, SOCKET sock,
 *
 * @note Support unix domain socket
 */
-INLINE bool BlSockSend(BlSockSend_t* io, SOCKET sock, const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
+INLINE bool BlSockSend(BlSockSend_t* io, int sock, const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockSend(io, sock, buf, len, flags, onCompleted);
 	return BlDoSockSend(io);
 }
@@ -1020,7 +1020,7 @@ INLINE bool BlSockSend(BlSockSend_t* io, SOCKET sock, const void* buf, uint32_t 
 *
 * @note Support unix domain socket
 */
-INLINE bool BlSockSendVec(BlSockSendVec_t* io, SOCKET sock,
+INLINE bool BlSockSendVec(BlSockSendVec_t* io, int sock,
 	const struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockSendVec(io, sock, bufVec, bufCnt, flags, onCompleted);
 	return BlDoSockSendVec(io);
@@ -1031,7 +1031,7 @@ INLINE bool BlSockSendVec(BlSockSendVec_t* io, SOCKET sock,
 *
 * @note DON'T support unix domain socket
 */
-INLINE bool BlSockSendTo(BlSockSendTo_t* io, SOCKET sock, const struct sockaddr* addr,
+INLINE bool BlSockSendTo(BlSockSendTo_t* io, int sock, const struct sockaddr* addr,
 	const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockSendTo(io, sock, addr, buf, len, flags, onCompleted);
 	return BlDoSockSendTo(io);
@@ -1041,7 +1041,7 @@ INLINE bool BlSockSendTo(BlSockSendTo_t* io, SOCKET sock, const struct sockaddr*
 * @brief
 * @note DON'T support unix domain socket
 */
-INLINE bool BlSockSendVecTo(BlSockSendVecTo_t* io, SOCKET sock, const struct sockaddr* addr,
+INLINE bool BlSockSendVecTo(BlSockSendVecTo_t* io, int sock, const struct sockaddr* addr,
 	const struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockSendVecTo(io, sock, addr, bufVec, bufCnt, flags, onCompleted);
 	return BlDoSockSendVecTo(io);
@@ -1051,7 +1051,7 @@ INLINE bool BlSockSendVecTo(BlSockSendVecTo_t* io, SOCKET sock, const struct soc
 * @brief
 * @note Support unix domain socket
 */
-INLINE bool BlSockMustSend(BlSockMustSend_t* io, SOCKET sock,
+INLINE bool BlSockMustSend(BlSockMustSend_t* io, int sock,
 	const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockMustSend(io, sock, buf, len, flags, onCompleted);
 	return BlDoSockMustSend(io);
@@ -1061,7 +1061,7 @@ INLINE bool BlSockMustSend(BlSockMustSend_t* io, SOCKET sock,
 * @brief
 * @note Support unix domain socket
 */
-INLINE bool BlSockMustSendVec(BlSockMustSendVec_t* io, SOCKET sock,
+INLINE bool BlSockMustSendVec(BlSockMustSendVec_t* io, int sock,
 	const struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockMustSendVec(io, sock, bufVec, bufCnt, flags, onCompleted);
 	return BlDoSockMustSendVec(io);
@@ -1071,7 +1071,7 @@ INLINE bool BlSockMustSendVec(BlSockMustSendVec_t* io, SOCKET sock,
 * @brief
 * @note Support unix domain socket
 */
-INLINE bool BlSockRecv(BlSockRecv_t* io, SOCKET sock, void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
+INLINE bool BlSockRecv(BlSockRecv_t* io, int sock, void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockRecv(io, sock, buf, len, flags, onCompleted);
 	return BlDoSockRecv(io);
 }
@@ -1080,7 +1080,7 @@ INLINE bool BlSockRecv(BlSockRecv_t* io, SOCKET sock, void* buf, uint32_t len, i
 * @brief
 * @note Support unix domain socket
 */
-INLINE bool BlSockRecvVec(BlSockRecvVec_t* io, SOCKET sock,
+INLINE bool BlSockRecvVec(BlSockRecvVec_t* io, int sock,
 	struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockRecvVec(io, sock, bufVec, bufCnt, flags, onCompleted);
 	return BlDoSockRecvVec(io);
@@ -1090,7 +1090,7 @@ INLINE bool BlSockRecvVec(BlSockRecvVec_t* io, SOCKET sock,
 * @brief
 * @note DON'T support unix domain socket
 */
-INLINE bool BlSockRecvFrom(BlSockRecvFrom_t* io, SOCKET sock, struct sockaddr* addr,
+INLINE bool BlSockRecvFrom(BlSockRecvFrom_t* io, int sock, struct sockaddr* addr,
 	socklen_t* addrLen, void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockRecvFrom(io, sock, addr, addrLen, buf, len, flags, onCompleted);
 	return BlDoSockRecvFrom(io);
@@ -1100,7 +1100,7 @@ INLINE bool BlSockRecvFrom(BlSockRecvFrom_t* io, SOCKET sock, struct sockaddr* a
 * @brief
 * @note DON'T support unix domain socket
 */
-INLINE bool BlSockRecvVecFrom(BlSockRecvVecFrom_t* io, SOCKET sock, struct sockaddr* addr,
+INLINE bool BlSockRecvVecFrom(BlSockRecvVecFrom_t* io, int sock, struct sockaddr* addr,
 	socklen_t* addrLen, struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockRecvVecFrom(io, sock, addr, addrLen, bufVec, bufCnt, flags, onCompleted);
 	return BlDoSockRecvVecFrom(io);
@@ -1110,7 +1110,7 @@ INLINE bool BlSockRecvVecFrom(BlSockRecvVecFrom_t* io, SOCKET sock, struct socka
 * @brief
 * @note Support unix domain socket
 */
-INLINE bool BlSockMustRecv(BlSockMustRecv_t* io, SOCKET sock,
+INLINE bool BlSockMustRecv(BlSockMustRecv_t* io, int sock,
 	void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockMustRecv(io, sock, buf, len, flags, onCompleted);
 	return BlDoSockMustRecv(io);
@@ -1120,7 +1120,7 @@ INLINE bool BlSockMustRecv(BlSockMustRecv_t* io, SOCKET sock,
 * @brief
 * @note Support unix domain socket
 */
-INLINE bool BlSockMustRecvVec(BlSockMustRecvVec_t* io, SOCKET sock,
+INLINE bool BlSockMustRecvVec(BlSockMustRecvVec_t* io, int sock,
 	struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	BlInitSockMustRecvVec(io, sock, bufVec, bufCnt, flags, onCompleted);
 	return BlDoSockMustRecvVec(io);
@@ -1130,7 +1130,7 @@ INLINE bool BlSockMustRecvVec(BlSockMustRecvVec_t* io, SOCKET sock,
 * @brief
 * @note Support unix domain socket
 */
-INLINE bool BlTcpClose(BlTcpClose_t* io, SOCKET sock, BlOnCompletedAio onCompleted) {
+INLINE bool BlTcpClose(BlTcpClose_t* io, int sock, BlOnCompletedAio onCompleted) {
 	BlInitTcpClose(io, sock, onCompleted);
 	return BlDoTcpClose(io);
 }
@@ -1139,7 +1139,7 @@ INLINE bool BlTcpClose(BlTcpClose_t* io, SOCKET sock, BlOnCompletedAio onComplet
 * @brief
 * @note Support unix domain socket
 */
-INLINE bool BlTcpShutdown(BlTcpShutdown_t* io, SOCKET sock, int how, BlOnCompletedAio onCompleted) {
+INLINE bool BlTcpShutdown(BlTcpShutdown_t* io, int sock, int how, BlOnCompletedAio onCompleted) {
 	BlInitTcpShutdown(io, sock, how, onCompleted);
 	return BlDoTcpShutdown(io);
 }
@@ -1184,7 +1184,7 @@ INLINE bool BlFileWrite(BlFileWrite_t* io, int f, uint64_t offset,
 
 
 /*
-* @brief Cancel all I/O of (HANDLE,SOCKET,...) `fd`
+* @brief Cancel all I/O of (HANDLE,int,...) `fd`
 * @param[in] fd file handle or socket or ...
 * @param[in] io NULL-cancel all I/O of `fd`, other-cancel the specific I/O related to `io`
 * @return

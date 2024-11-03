@@ -39,7 +39,7 @@ TEST_CASE("test post task") {
 	BlWaitExited();
 }
 
-bl::task<void> echo(SOCKET sock) {
+bl::task<void> echo(int sock) {
 	char buf[1024];
 	size_t n = sizeof(buf);
 	size_t nTotalRead = 0, nTotalSend = 0;
@@ -62,20 +62,20 @@ bl::task<void> echo(SOCKET sock) {
 
 const char* echo_test_unix_server_path = "./echo_test_unix";
 
-SOCKET echoserver(sa_family_t family, int n) {
+int echoserver(sa_family_t family, int n) {
 	std::cout << "Echo server started in thread " << std::this_thread::get_id() << std::endl;
-	SOCKET sockListen;
+	int sockListen;
 	if (family == AF_INET || family == AF_INET6)
 		sockListen = BlTcpNewServer(bl::SockAddr(28629, family==AF_INET6), true, 100);
 	else {
 		REQUIRE(family == AF_UNIX);
 		sockListen = BlUnixNewServer(echo_test_unix_server_path, true, 100);
 	}
-	if (sockListen == INVALID_SOCKET)
+	if (sockListen < 0)
 		std::cout << "Failed to create server socket:err=" << BlGetLastError() << std::endl;
-	REQUIRE(sockListen != INVALID_SOCKET);
+	REQUIRE(sockListen >= 0);
 	bl::TcpStartServer(sockListen, family,
-		[](SOCKET sock, const struct sockaddr& peer, bl::FnTcpServerLog fnLog) {
+		[](int sock, const struct sockaddr& peer, bl::FnTcpServerLog fnLog) {
 			bl::SockAddr aPeer(peer);
 			std::cout << "Accept a connection from: " << aPeer.to_str() << std::endl;
 			return echo(sock);
@@ -89,7 +89,7 @@ SOCKET echoserver(sa_family_t family, int n) {
 
 bl::task<void> echoclient(sa_family_t family, int i) {
 	std::cout << "Client " << i << " started in the thread " << std::this_thread::get_id() << std::endl;
-	SOCKET sock;
+	int sock;
 	bl::SockAddr srvAddr;
 	if (family == AF_INET || family == AF_INET6) {
 		sock = BlSockTcp(family == AF_INET6);
@@ -101,7 +101,7 @@ bl::task<void> echoclient(sa_family_t family, int i) {
 		sock = BlSockUnix();
 		srvAddr = bl::SockAddr(echo_test_unix_server_path);
 	}
-	REQUIRE(sock != INVALID_SOCKET);
+	REQUIRE(sock >= 0);
 	std::cout << "Connecting " << srvAddr.to_str() << std::endl;
 	auto err = co_await bl::TcpConnect(sock, srvAddr);
 	if (err != 0) {
@@ -127,7 +127,7 @@ bl::task<void> echoclient(sa_family_t family, int i) {
 
 TEST_CASE("test echo server ipv4") {
 	BlInit(0, 0, 0);
-	SOCKET sockListen = echoserver(AF_INET, 2);
+	int sockListen = echoserver(AF_INET, 2);
 	for (int i = 0; i < 2; ++i)
 		bl::go(echoclient(AF_INET, i).get_handle());
 	std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -139,7 +139,7 @@ TEST_CASE("test echo server ipv4") {
 
 TEST_CASE("test echo server ipv6") {
 	BlInit(0, 0, 0);
-	SOCKET sockListen = echoserver(AF_INET6, 2);
+	int sockListen = echoserver(AF_INET6, 2);
 	for (int i = 0; i < 2; ++i)
 		bl::go(echoclient(AF_INET6, i).get_handle());
 	std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -151,7 +151,7 @@ TEST_CASE("test echo server ipv6") {
 
 TEST_CASE("test echo server unix domain socket") {
 	BlInit(0, 0, 0);
-	SOCKET sockListen = echoserver(AF_UNIX, 2);
+	int sockListen = echoserver(AF_UNIX, 2);
 	for (int i = 0; i < 2; ++i)
 		bl::go(echoclient(AF_UNIX, i).get_handle());
 	std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -193,8 +193,8 @@ TEST_CASE("test co_await coroutine") {
 }
 
 bl::task<void> udp_receiver() {
-	SOCKET sockR = BlUdpNewPeerReceiver(bl::SockAddr(43217), true);
-	REQUIRE(sockR != INVALID_SOCKET);
+	int sockR = BlUdpNewPeerReceiver(bl::SockAddr(43217), true);
+	REQUIRE(sockR >= 0);
 	char buf[128];
 	size_t n = sizeof(buf);
 	bl::SockAddr addr(0,true);
@@ -208,8 +208,8 @@ bl::task<void> udp_receiver() {
 }
 
 bl::task<void> udp_sender() {
-	SOCKET sockS = BlUdpNewPeerSender(bl::SockAddr("127.0.0.1", 43217));
-	REQUIRE(sockS != INVALID_SOCKET);
+	int sockS = BlUdpNewPeerSender(bl::SockAddr("127.0.0.1", 43217));
+	REQUIRE(sockS >= 0);
 	char buf[128] = "Haha, this is sender speak!";
 	size_t n = strlen(buf);
 	int rev = BlSockPoll(sockS, POLLWRNORM, 0);
@@ -238,8 +238,8 @@ TEST_CASE("test udp 1") {
 }
 
 bl::task<void> udp_receiver2() {
-	SOCKET sockR = BlUdpNewPeerReceiver(bl::SockAddr(43217), true);
-	REQUIRE(sockR != INVALID_SOCKET);
+	int sockR = BlUdpNewPeerReceiver(bl::SockAddr(43217), true);
+	REQUIRE(sockR >= 0);
 	char buf[128];
 	bl::SockAddr addr(0, true);
 	iovec bufs[2] = { { buf, 16 }, { buf+32, sizeof(buf)-32 }};
@@ -268,8 +268,8 @@ static void CollectIoVec(char* dst, iovec* bufs, size_t bufCnt, size_t nTotal) {
 }
 
 bl::task<void> udp_sender2() {
-	SOCKET sockS = BlUdpNewPeerSender(bl::SockAddr("127.0.0.1", 43217));
-	REQUIRE(sockS != INVALID_SOCKET);
+	int sockS = BlUdpNewPeerSender(bl::SockAddr("127.0.0.1", 43217));
+	REQUIRE(sockS >= 0);
 	char buf1[] = "Haha, this is sender speak(part1)!";
 	size_t n1 = strlen(buf1);
 	char buf2[] = "Using scatter/gather i/o with iovec data here(part2)";
@@ -323,8 +323,8 @@ TEST_CASE("test multicast address") {
 }
 
 bl::task<void> udp_receiver3() {
-	SOCKET sockR = BlUdpNewPeerReceiverEx(bl::SockAddr("224.34.129.38", 43217), nullptr, true);
-	REQUIRE(sockR != INVALID_SOCKET);
+	int sockR = BlUdpNewPeerReceiverEx(bl::SockAddr("224.34.129.38", 43217), nullptr, true);
+	REQUIRE(sockR >= 0);
 	char buf[128];
 	size_t n = sizeof(buf);
 	bl::SockAddr addr(0, true);
@@ -339,8 +339,8 @@ bl::task<void> udp_receiver3() {
 }
 
 bl::task<void> udp_sender3() {
-	SOCKET sockS = BlSockUdp(false);
-	REQUIRE(sockS != INVALID_SOCKET);
+	int sockS = BlSockUdp(false);
+	REQUIRE(sockS >= 0);
 	REQUIRE(0 == BlSockSetMulticastTtl(sockS, false, 128));
 	REQUIRE(0==BlSockSetMulticastLoop(sockS, false, 1));
 	char buf[128] = "Haha, this is sender speak!";

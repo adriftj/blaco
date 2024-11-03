@@ -373,6 +373,15 @@ static bool _BlPostTaskToWorker(size_t slot, BlTaskCallback cb, void* parm) {
 	return true;
 }
 
+void _BlBroadcastIoTask(BlTaskCallback cb, void* parm, size_t currentSlot) {
+	for (size_t slot = 0; slot < s_numIoWorkers; ++slot) {
+		if (slot != currentSlot)
+			_BlPostTaskToWorker(slot, cb, parm);
+		else
+			cb(parm);
+	}
+}
+
 void BlPostTask(BlTaskCallback cb, void* parm, bool isIoTask) {
 	size_t slot = PickupWorker(isIoTask);
 	_BlPostTaskToWorker(slot, cb, parm);
@@ -421,24 +430,11 @@ static void OnCancelIoPosted(void* parm) {
 }
 
 int BlCancelIo(int fd, BlAioBase* io) {
-	Worker* worker = st_worker;
-	if (worker) // inside _BlIoLoop(thread pool)
-		CancelIoInWorker(worker, fd, io);
-	else {
-		_BlPostTaskParm task;
-		if (io) {
-			task.cb = OnCancelIoPosted;
-			task.parm = io;
-		}
-		else {
-			task.cb = OnCancelIoFdPosted;
-			task.parm = (void*)(intptr_t)fd;
-		}
-		size_t slot = PickupWorker(true);
-		int r = write(s_workers[slot].fdPipe[1], &task, sizeof(task));
-		if (r < 0)
-			return -1;
-	}
+	size_t currentSlot = st_worker ? st_worker->slot : (size_t)-1;
+	if(io)
+		_BlBroadcastIoTask(OnCancelIoPosted, io, currentSlot);
+	else
+		_BlBroadcastIoTask(OnCancelIoFdPosted, (void*)(intptr_t)fd, currentSlot);
 	return 0;
 }
 

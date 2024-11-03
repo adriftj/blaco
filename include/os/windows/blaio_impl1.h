@@ -52,35 +52,35 @@ INLINE bool BlWaitEventForTime(BlEvent ev, uint32_t t) {
 	return WaitForSingleObject(ev, t) == WAIT_OBJECT_0;
 }
 
-SOCKET BlSockCreate(sa_family_t family, int sockType, int protocol);
+int BlSockCreate(sa_family_t family, int sockType, int protocol);
 
-INLINE SOCKET BlSockRaw(int protocol, bool ipv6) {
+INLINE int BlSockRaw(int protocol, bool ipv6) {
 	return BlSockCreate(ipv6? AF_INET6: AF_INET, SOCK_RAW, protocol);
 }
 
-INLINE SOCKET BlSockTcp(bool ipv6) {
+INLINE int BlSockTcp(bool ipv6) {
 	return BlSockCreate(ipv6? AF_INET6: AF_INET, SOCK_STREAM, IPPROTO_TCP);
 }
 
-INLINE SOCKET BlSockUdp(bool ipv6) {
+INLINE int BlSockUdp(bool ipv6) {
 	return BlSockCreate(ipv6? AF_INET6: AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 }
 
-INLINE SOCKET BlSockUdpLite(bool ipv6) {
+INLINE int BlSockUdpLite(bool ipv6) {
 	return BlSockCreate(ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, 136);
 }
 
 #ifdef SUPPORT_AF_UNIX
-INLINE SOCKET BlSockUnix() {
+INLINE int BlSockUnix() {
 	return BlSockCreate(AF_UNIX, SOCK_STREAM, 0);
 }
 #endif
 
-INLINE int BlSockClose(SOCKET sock) {
+INLINE int BlSockClose(int sock) {
 	return closesocket(sock);
 }
 
-INLINE int BlSockSetKeepAliveVals(SOCKET sock, bool onoff, uint32_t keepAliveTime, uint32_t keepAliveInterval) {
+INLINE int BlSockSetKeepAliveVals(int sock, bool onoff, uint32_t keepAliveTime, uint32_t keepAliveInterval) {
 	DWORD ulBytesReturn = 0;
 	struct tcp_keepalive inKeepAlive;
 	inKeepAlive.onoff = (onoff ? 1 : 0);
@@ -98,8 +98,8 @@ INLINE void BlSetLastError(int err) {
 }
 
 
-INLINE int BlSockPoll(SOCKET sock, short events, int timeout) {
-	WSAPOLLFD pollfd = {sock, events, 0};
+INLINE int BlSockPoll(int sock, short events, int timeout) {
+	WSAPOLLFD pollfd = {(SOCKET)sock, events, 0};
 	int r = WSAPoll(&pollfd, 1, timeout);
 	return r>0? pollfd.revents: r;
 }
@@ -186,7 +186,7 @@ typedef struct {
 
 void _BlInternalOnCompletedTcpAccept(BlTcpAccept_t* io, int err, DWORD unused);
 
-INLINE void BlInitTcpAccept(BlTcpAccept_t* io, SOCKET sock, sa_family_t family,
+INLINE void BlInitTcpAccept(BlTcpAccept_t* io, int sock, sa_family_t family,
 	struct sockaddr* peer, socklen_t* peerLen, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedTcpAccept)
 	io->listenSock = sock;
@@ -195,7 +195,7 @@ INLINE void BlInitTcpAccept(BlTcpAccept_t* io, SOCKET sock, sa_family_t family,
 	io->peerLen = peerLen;
 }
 
-INLINE void _BlOnTcpAcceptOk(BlTcpAccept_t* io, SOCKET sock, int err) {
+INLINE void _BlOnTcpAcceptOk(BlTcpAccept_t* io, int sock, int err) {
 	if (err == 0) {
 		if (setsockopt(sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&io->listenSock, sizeof(io->listenSock)) != 0)
 			err = WSAGetLastError();
@@ -222,7 +222,8 @@ INLINE bool BlDoTcpAccept(BlTcpAccept_t* io) {
 	else if (family == AF_UNIX)
 		aSock = BlSockUnix();
 	else
-		aSock = INVALID_SOCKET;
+		return _BlOnTcpAcceptOk(io, -1, EINVAL), false;
+
 	BOOL b = g_AcceptEx(io->listenSock, aSock, io->tmpBuf, 0,
 		sizeof(BlSockAddr), sizeof(BlSockAddr), NULL, &io->base.ov);
 	if (b)
@@ -245,7 +246,7 @@ typedef struct {
 
 void _BlInternalOnCompletedTcpConnect(BlTcpConnect_t* io, int err, DWORD unused);
 
-INLINE void BlInitTcpConnect(BlTcpConnect_t* io, SOCKET sock, const struct sockaddr* addr, BlOnCompletedAio onCompleted) {
+INLINE void BlInitTcpConnect(BlTcpConnect_t* io, int sock, const struct sockaddr* addr, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedTcpConnect)
 	io->sock = sock;
 	io->addr = addr;
@@ -286,7 +287,7 @@ typedef struct {
 	WSABUF buf;
 } BlSockSend_t;
 
-INLINE void BlInitSockSend(BlSockSend_t* io, SOCKET sock, const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
+INLINE void BlInitSockSend(BlSockSend_t* io, int sock, const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedXfer)
 	io->sock = sock;
 	io->buf.buf = (char*)buf;
@@ -309,7 +310,7 @@ typedef struct {
 	WSABUF bufs[BL_MAX_BUFS_IN_IOVEC];
 } BlSockSendVec_t;
 
-INLINE void BlInitSockSendVec(BlSockSendVec_t* io, SOCKET sock,
+INLINE void BlInitSockSendVec(BlSockSendVec_t* io, int sock,
 	const struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedXfer)
 	io->sock = sock;
@@ -336,7 +337,7 @@ typedef struct {
 	WSABUF buf;
 } BlSockSendTo_t;
 
-INLINE void BlInitSockSendTo(BlSockSendTo_t* io, SOCKET sock, const struct sockaddr* addr,
+INLINE void BlInitSockSendTo(BlSockSendTo_t* io, int sock, const struct sockaddr* addr,
 	const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedXfer)
 	io->sock = sock;
@@ -363,7 +364,7 @@ typedef struct {
 	WSABUF bufs[BL_MAX_BUFS_IN_IOVEC];
 } BlSockSendVecTo_t;
 
-INLINE void BlInitSockSendVecTo(BlSockSendVecTo_t* io, SOCKET sock, const struct sockaddr* addr,
+INLINE void BlInitSockSendVecTo(BlSockSendVecTo_t* io, int sock, const struct sockaddr* addr,
 	const struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedXfer)
 	io->sock = sock;
@@ -393,7 +394,7 @@ typedef struct {
 
 void _BlInternalOnCompletedSockMustSend(BlSockMustSend_t* io, int err, DWORD nXfer);
 
-INLINE void BlInitSockMustSend(BlSockMustSend_t* io, SOCKET sock,
+INLINE void BlInitSockMustSend(BlSockMustSend_t* io, int sock,
 	const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedSockMustSend)
 	io->sock = sock;
@@ -447,7 +448,7 @@ typedef struct {
 
 void _BlInternalOnCompletedSockMustSendVec(BlSockMustSendVec_t* io, int err, DWORD nXfer);
 
-INLINE void BlInitSockMustSendVec(BlSockMustSendVec_t* io, SOCKET sock,
+INLINE void BlInitSockMustSendVec(BlSockMustSendVec_t* io, int sock,
 	const struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedSockMustSendVec)
 	io->sock = sock;
@@ -501,7 +502,7 @@ typedef struct {
 	WSABUF buf;
 } BlSockRecv_t;
 
-INLINE void BlInitSockRecv(BlSockRecv_t* io, SOCKET sock, void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
+INLINE void BlInitSockRecv(BlSockRecv_t* io, int sock, void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedXfer)
 	io->sock = sock;
 	io->buf.buf = (char*)buf;
@@ -524,7 +525,7 @@ typedef struct {
 	WSABUF bufs[BL_MAX_BUFS_IN_IOVEC];
 } BlSockRecvVec_t;
 
-INLINE void BlInitSockRecvVec(BlSockRecvVec_t* io, SOCKET sock,
+INLINE void BlInitSockRecvVec(BlSockRecvVec_t* io, int sock,
 	struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedXfer)
 	io->sock = sock;
@@ -552,7 +553,7 @@ typedef struct {
 	WSABUF buf;
 } BlSockRecvFrom_t;
 
-INLINE void BlInitSockRecvFrom(BlSockRecvFrom_t* io, SOCKET sock, struct sockaddr* addr,
+INLINE void BlInitSockRecvFrom(BlSockRecvFrom_t* io, int sock, struct sockaddr* addr,
 	socklen_t* addrLen, void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedXfer)
 	io->sock = sock;
@@ -580,7 +581,7 @@ typedef struct {
 	WSABUF bufs[BL_MAX_BUFS_IN_IOVEC];
 } BlSockRecvVecFrom_t;
 
-INLINE void BlInitSockRecvVecFrom(BlSockRecvVecFrom_t* io, SOCKET sock, struct sockaddr* addr,
+INLINE void BlInitSockRecvVecFrom(BlSockRecvVecFrom_t* io, int sock, struct sockaddr* addr,
 	socklen_t* addrLen, struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedXfer)
 	io->sock = sock;
@@ -611,7 +612,7 @@ typedef struct {
 
 void _BlInternalOnCompletedMustRecv(BlSockMustRecv_t* io, int err, DWORD nXfer);
 
-INLINE void BlInitSockMustRecv(BlSockMustRecv_t* io, SOCKET sock,
+INLINE void BlInitSockMustRecv(BlSockMustRecv_t* io, int sock,
 	void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedMustRecv)
 	io->sock = sock;
@@ -665,7 +666,7 @@ typedef struct {
 
 void _BlInternalOnCompletedMustRecvVec(BlSockMustRecvVec_t* io, int err, DWORD nXfer);
 
-INLINE void BlInitSockMustRecvVec(BlSockMustRecvVec_t* io, SOCKET sock,
+INLINE void BlInitSockMustRecvVec(BlSockMustRecvVec_t* io, int sock,
 	struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedMustRecvVec)
 	io->sock = sock;
@@ -720,7 +721,7 @@ typedef struct {
 
 void _BlInternalOnCompletedTcpClose(BlTcpClose_t* io, int err, DWORD unused);
 
-INLINE void BlInitTcpClose(BlTcpClose_t* io, SOCKET sock, BlOnCompletedAio onCompleted) {
+INLINE void BlInitTcpClose(BlTcpClose_t* io, int sock, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedTcpClose)
 	io->sock = sock;
 }
@@ -744,7 +745,7 @@ typedef struct {
 	int how;
 } BlTcpShutdown_t;
 
-INLINE void BlInitTcpShutdown(BlTcpShutdown_t* io, SOCKET sock, int how, BlOnCompletedAio onCompleted) {
+INLINE void BlInitTcpShutdown(BlTcpShutdown_t* io, int sock, int how, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedAioRetInt)
 	io->sock = sock;
 	io->how = how;
@@ -843,16 +844,13 @@ INLINE HANDLE _BlCreateFileUtf8(
 }
 
 INLINE int BlFileClose(int f) {
-#pragma warning(push)
-#pragma warning(disable: 4312)
-	return CloseHandle((HANDLE)f) ? 0 : -1;
-#pragma warning(pop)
+	return CloseHandle((HANDLE)(intptr_t)f) ? 0 : -1;
 }
 
 typedef struct {
 	BlAioBase base;
 
-	int f;
+	HANDLE f;
 	uint32_t bufLen;
 	void* buf;
 } BlFileRead_t;
@@ -860,25 +858,22 @@ typedef struct {
 INLINE void BlInitFileRead(BlFileRead_t* io, int f, uint64_t offset,
 	void* buf, uint32_t len, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedXfer)
-	io->f = f;
+	io->f = (HANDLE)(intptr_t)f;
 	io->base.ov.Pointer = (PVOID)offset;
 	io->buf = buf;
 	io->bufLen = len;
 }
 
 INLINE bool BlDoFileRead(BlFileRead_t* io) {
-#pragma warning(push)
-#pragma warning(disable: 4312)
 	DWORD nXfer;
-	bool b = ReadFile((HANDLE)io->f, io->buf, io->bufLen, &nXfer, &io->base.ov);
-#pragma warning(pop)
+	bool b = ReadFile(io->f, io->buf, io->bufLen, &nXfer, &io->base.ov);
 	return _BlProcessRetXferSize(b, &io->base.ret, nXfer);
 }
 
 typedef struct {
 	BlAioBase base;
 
-	int f;
+	HANDLE f;
 	struct iovec* bufs;
 	size_t bufCnt;
 } BlFileReadVec_t;
@@ -888,7 +883,7 @@ void _BlInternalOnCompletedFileReadVec(BlFileReadVec_t* io, int err, DWORD nXfer
 INLINE void BlInitFileReadVec(BlFileReadVec_t* io, int f, uint64_t offset,
 	struct iovec* bufs, size_t bufCnt, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedFileReadVec)
-	io->f = f;
+	io->f = (HANDLE)(intptr_t)f;
 	io->base.ov.Pointer = (PVOID)offset;
 	io->base.ret = 0;
 	io->bufs = bufs;
@@ -910,11 +905,8 @@ INLINE bool _BlOnFileReadVecOk(BlFileReadVec_t* io, int err, DWORD nXfer) {
 				return false;
 			++(io->bufs);
 			io->base.ov.Pointer = ((char*)io->base.ov.Pointer) + nXfer;
-#pragma warning(push)
-#pragma warning(disable: 4312)
-			if (ReadFile((HANDLE)io->f, io->bufs->iov_base, io->bufs->iov_len, &nXfer, &io->base.ov))
+			if (ReadFile(io->f, io->bufs->iov_base, io->bufs->iov_len, &nXfer, &io->base.ov))
 				continue;
-#pragma warning(pop)
 			err = WSAGetLastError();
 			if (err == WSA_IO_PENDING)
 				return true;
@@ -930,11 +922,8 @@ INLINE bool _BlOnFileReadVecOk(BlFileReadVec_t* io, int err, DWORD nXfer) {
 }
 
 INLINE bool BlDoFileReadVec(BlFileReadVec_t* io) {
-#pragma warning(push)
-#pragma warning(disable: 4312)
 	DWORD nXfer;
-	bool b = ReadFile((HANDLE)io->f, io->bufs->iov_base, io->bufs->iov_len, &nXfer, &io->base.ov);
-#pragma warning(pop)
+	bool b = ReadFile(io->f, io->bufs->iov_base, io->bufs->iov_len, &nXfer, &io->base.ov);
 	if (b)
 		return _BlOnFileReadVecOk(io, 0, nXfer);
 	return _BlProcessRetXferSize(b, &io->base.ret, nXfer);
@@ -943,7 +932,7 @@ INLINE bool BlDoFileReadVec(BlFileReadVec_t* io) {
 typedef struct {
 	BlAioBase base;
 
-	int f;
+	HANDLE f;
 	uint32_t bufLen;
 	const void* buf;
 } BlFileWrite_t;
@@ -951,7 +940,7 @@ typedef struct {
 INLINE void BlInitFileWrite(BlFileWrite_t* io, int f, uint64_t offset,
 	const void* buf, uint32_t len, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedXfer)
-	io->f = f;
+	io->f = (HANDLE)(intptr_t)f;
 	io->base.ov.Pointer = (PVOID)offset;
 	io->buf = buf;
 	io->bufLen = len;
@@ -959,17 +948,14 @@ INLINE void BlInitFileWrite(BlFileWrite_t* io, int f, uint64_t offset,
 
 INLINE bool BlDoFileWrite(BlFileWrite_t* io) {
 	DWORD nXfer;
-#pragma warning(push)
-#pragma warning(disable: 4312)
-	bool b = WriteFile((HANDLE)io->f, io->buf, io->bufLen, &nXfer, &io->base.ov);
-#pragma warning(pop)
+	bool b = WriteFile(io->f, io->buf, io->bufLen, &nXfer, &io->base.ov);
 	return _BlProcessRetXferSize(b, &io->base.ret, nXfer);
 }
 
 typedef struct {
 	BlAioBase base;
 
-	int f;
+	HANDLE f;
 	const struct iovec* bufs;
 	size_t bufCnt;
 } BlFileWriteVec_t;
@@ -979,7 +965,7 @@ void _BlInternalOnCompletedFileWriteVec(BlFileWriteVec_t* io, int err, DWORD nXf
 INLINE void BlInitFileWriteVec(BlFileWriteVec_t* io, int f, uint64_t offset,
 	const struct iovec* bufs, size_t bufCnt, BlOnCompletedAio onCompleted) {
 	_BLAIOBASE_INIT(_BlInternalOnCompletedFileWriteVec)
-	io->f = f;
+	io->f = (HANDLE)(intptr_t)f;
 	io->base.ov.Pointer = (PVOID)offset;
 	io->base.ret = 0;
 	io->bufs = bufs;
@@ -1001,11 +987,8 @@ INLINE bool _BlOnFileWriteVecOk(BlFileWriteVec_t* io, int err, DWORD nXfer) {
 				return false;
 			++(io->bufs);
 			io->base.ov.Pointer = ((char*)io->base.ov.Pointer) + nXfer;
-#pragma warning(push)
-#pragma warning(disable: 4312)
-			if (WriteFile((HANDLE)io->f, io->bufs->iov_base, io->bufs->iov_len, &nXfer, &io->base.ov))
+			if (WriteFile(io->f, io->bufs->iov_base, io->bufs->iov_len, &nXfer, &io->base.ov))
 				continue;
-#pragma warning(pop)
 			err = WSAGetLastError();
 			if (err == WSA_IO_PENDING)
 				return true;
@@ -1021,21 +1004,15 @@ INLINE bool _BlOnFileWriteVecOk(BlFileWriteVec_t* io, int err, DWORD nXfer) {
 }
 
 INLINE bool BlDoFileWriteVec(BlFileWriteVec_t* io) {
-#pragma warning(push)
-#pragma warning(disable: 4312)
 	DWORD nXfer;
-	bool b = WriteFile((HANDLE)io->f, io->bufs->iov_base, io->bufs->iov_len, &nXfer, &io->base.ov);
-#pragma warning(pop)
+	bool b = WriteFile(io->f, io->bufs->iov_base, io->bufs->iov_len, &nXfer, &io->base.ov);
 	if (b)
 		return _BlOnFileWriteVecOk(io, 0, nXfer);
 	return _BlProcessRetXferSize(b, &io->base.ret, nXfer);
 }
 
 INLINE int BlCancelIo(int fd, BlAioBase* io) {
-#pragma warning(push)
-#pragma warning(disable: 4312)
-	if(CancelIoEx((HANDLE)fd, (LPOVERLAPPED)io))
-#pragma warning(pop)
+	if(CancelIoEx((HANDLE)(intptr_t)fd, (LPOVERLAPPED)io))
 		return 0;
 	return -1;
 }

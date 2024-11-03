@@ -33,7 +33,7 @@ INLINE void McoSchedule(mco_coro* coro, bool isIoTask) {
 *   @retval ret>=0, ok. ret is the accepted socket, `peer` was filled.
 *   @retval ret<0, -ret is the error code, *peer not modified.
 */
-INLINE int McoTcpAccept(SOCKET sock, sa_family_t family, struct sockaddr* peer, socklen_t* peerLen) {
+INLINE int McoTcpAccept(int sock, sa_family_t family, struct sockaddr* peer, socklen_t* peerLen) {
 	BlTcpAccept_t io;
 	BlInitTcpAccept(&io, sock, family, peer, peerLen, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -47,7 +47,7 @@ INLINE int McoTcpAccept(SOCKET sock, sa_family_t family, struct sockaddr* peer, 
 * 
 * @note Support unix domain socket
 */
-INLINE int McoTcpConnect(SOCKET sock, const struct sockaddr* addr) {
+INLINE int McoTcpConnect(int sock, const struct sockaddr* addr) {
 	BlTcpConnect_t io;
 	BlInitTcpConnect(&io, sock, addr, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -63,7 +63,7 @@ INLINE int McoTcpConnect(SOCKET sock, const struct sockaddr* addr) {
 *   @retval ret<0, -ret is the error code.
 * @note Support unix domain socket
 */
-INLINE int McoSockSend(SOCKET sock, const void* buf, uint32_t len, int flags) {
+INLINE int McoSockSend(int sock, const void* buf, uint32_t len, int flags) {
 	BlSockSend_t io;
 	BlInitSockSend(&io, sock, buf, len, flags, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -79,7 +79,7 @@ INLINE int McoSockSend(SOCKET sock, const void* buf, uint32_t len, int flags) {
 *   @retval ret<0, -ret is the error code.
 * @note Support unix domain socket
 */
-INLINE int McoSockSendVec(SOCKET sock, const struct iovec* bufVec, size_t bufCnt, int flags) {
+INLINE int McoSockSendVec(int sock, const struct iovec* bufVec, size_t bufCnt, int flags) {
 	BlSockSendVec_t io;
 	BlInitSockSendVec(&io, sock, bufVec, bufCnt, flags, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -95,7 +95,7 @@ INLINE int McoSockSendVec(SOCKET sock, const struct iovec* bufVec, size_t bufCnt
 *   @retval ret<0, -ret is the error code.
 * @note DON'T support unix domain socket
 */
-INLINE int McoSockSendTo(SOCKET sock, const struct sockaddr* addr,
+INLINE int McoSockSendTo(int sock, const struct sockaddr* addr,
 	const void* buf, uint32_t len, int flags) {
 	BlSockSendTo_t io;
 	BlInitSockSendTo(&io, sock, addr, buf, len, flags, (BlOnCompletedAio)mco_resume_io);
@@ -112,7 +112,7 @@ INLINE int McoSockSendTo(SOCKET sock, const struct sockaddr* addr,
 *   @retval ret<0, -ret is the error code.
 * @note DON'T support unix domain socket
 */
-INLINE int McoSockSendVecTo(SOCKET sock, const struct sockaddr* addr,
+INLINE int McoSockSendVecTo(int sock, const struct sockaddr* addr,
 	const struct iovec* bufVec, size_t bufCnt, int flags) {
 	BlSockSendVecTo_t io;
 	BlInitSockSendVecTo(&io, sock, addr, bufVec, bufCnt, flags, (BlOnCompletedAio)mco_resume_io);
@@ -129,7 +129,7 @@ INLINE int McoSockSendVecTo(SOCKET sock, const struct sockaddr* addr,
 *   @retval err<>0, the error code.
 * @note Support unix domain socket
 */
-INLINE int McoSockMustSend(SOCKET sock, const void* buf, uint32_t len, int flags) {
+INLINE int McoSockMustSend(int sock, const void* buf, uint32_t len, int flags) {
 	BlSockMustSend_t io;
 	BlInitSockMustSend(&io, sock, buf, len, flags, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -145,7 +145,7 @@ INLINE int McoSockMustSend(SOCKET sock, const void* buf, uint32_t len, int flags
 *   @retval err<>0, the error code.
 * @note Support unix domain socket
 */
-INLINE int McoSockMustSendVec(SOCKET sock, const struct iovec* bufVec, size_t bufCnt, int flags) {
+INLINE int McoSockMustSendVec(int sock, const struct iovec* bufVec, size_t bufCnt, int flags) {
 	BlSockMustSendVec_t io;
 	BlInitSockMustSendVec(&io, sock, bufVec, bufCnt, flags, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -161,7 +161,7 @@ INLINE int McoSockMustSendVec(SOCKET sock, const struct iovec* bufVec, size_t bu
 *   @retval ret<0, -ret is the error code.
 * @note Support unix domain socket
 */
-INLINE int McoSockRecv(SOCKET sock, void* buf, uint32_t len, int flags) {
+INLINE int McoSockRecv(int sock, void* buf, uint32_t len, int flags) {
 	BlSockRecv_t io;
 	BlInitSockRecv(&io, sock, buf, len, flags, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -177,7 +177,7 @@ INLINE int McoSockRecv(SOCKET sock, void* buf, uint32_t len, int flags) {
 *   @retval ret<0, -ret is the error code.
 * @note Support unix domain socket
 */
-INLINE int McoSockRecvVec(SOCKET sock, struct iovec* bufVec, size_t bufCnt, int flags) {
+INLINE int McoSockRecvVec(int sock, struct iovec* bufVec, size_t bufCnt, int flags) {
 	BlSockRecvVec_t io;
 	BlInitSockRecvVec(&io, sock, bufVec, bufCnt, flags, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -193,7 +193,7 @@ INLINE int McoSockRecvVec(SOCKET sock, struct iovec* bufVec, size_t bufCnt, int 
 *   @retval ret<0, -ret is the error code.
 * @note DON'T support unix domain socket
 */
-INLINE int McoSockRecvFrom(SOCKET sock, struct sockaddr* addr,
+INLINE int McoSockRecvFrom(int sock, struct sockaddr* addr,
 	socklen_t* addrLen, void* buf, uint32_t len, int flags) {
 	BlSockRecvFrom_t io;
 	BlInitSockRecvFrom(&io, sock, addr, addrLen, buf, len, flags, (BlOnCompletedAio)mco_resume_io);
@@ -210,7 +210,7 @@ INLINE int McoSockRecvFrom(SOCKET sock, struct sockaddr* addr,
 *   @retval ret<0, -ret is the error code.
 * @note DON'T support unix domain socket
 */
-INLINE int McoSockRecvVecFrom(SOCKET sock, struct sockaddr* addr, socklen_t* addrLen,
+INLINE int McoSockRecvVecFrom(int sock, struct sockaddr* addr, socklen_t* addrLen,
 	struct iovec* bufVec, size_t bufCnt, int flags) {
 	BlSockRecvVecFrom_t io;
 	BlInitSockRecvVecFrom(&io, sock, addr, addrLen, bufVec, bufCnt, flags, (BlOnCompletedAio)mco_resume_io);
@@ -227,7 +227,7 @@ INLINE int McoSockRecvVecFrom(SOCKET sock, struct sockaddr* addr, socklen_t* add
 *   @retval err<>0, the error code.
 * @note Support unix domain socket
 */
-INLINE int McoSockMustRecv(SOCKET sock, void* buf, uint32_t len, int flags) {
+INLINE int McoSockMustRecv(int sock, void* buf, uint32_t len, int flags) {
 	BlSockMustRecv_t io;
 	BlInitSockMustRecv(&io, sock, buf, len, flags, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -243,7 +243,7 @@ INLINE int McoSockMustRecv(SOCKET sock, void* buf, uint32_t len, int flags) {
 *   @retval err<>0, the error code.
 * @note Support unix domain socket
 */
-INLINE int McoSockMustRecvVec(SOCKET sock, struct iovec* bufVec, size_t bufCnt, int flags) {
+INLINE int McoSockMustRecvVec(int sock, struct iovec* bufVec, size_t bufCnt, int flags) {
 	BlSockMustRecvVec_t io;
 	BlInitSockMustRecvVec(&io, sock, bufVec, bufCnt, flags, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -256,7 +256,7 @@ INLINE int McoSockMustRecvVec(SOCKET sock, struct iovec* bufVec, size_t bufCnt, 
 * @brief
 * @note Support unix domain socket
 */
-INLINE int McoTcpClose(SOCKET sock) {
+INLINE int McoTcpClose(int sock) {
 	BlTcpClose_t io;
 	BlInitTcpClose(&io, sock, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -269,7 +269,7 @@ INLINE int McoTcpClose(SOCKET sock) {
 * @brief
 * @note Support unix domain socket
 */
-INLINE int McoTcpShutdown(SOCKET sock, int how) {
+INLINE int McoTcpShutdown(int sock, int how) {
 	BlTcpShutdown_t io;
 	BlInitTcpShutdown(&io, sock, how, (BlOnCompletedAio)mco_resume_io);
 	io.base.coro = mco_running();
@@ -287,7 +287,7 @@ typedef struct {
 	void* logger;
 } McoTcpServerOptions;
 
-typedef void (*McoFnStartSession)(SOCKET, const struct sockaddr*, void* parm, const McoTcpServerOptions* opts);
+typedef void (*McoFnStartSession)(int, const struct sockaddr*, void* parm, const McoTcpServerOptions* opts);
 
 /*
 * @brief Start a TCP server
@@ -297,7 +297,7 @@ typedef void (*McoFnStartSession)(SOCKET, const struct sockaddr*, void* parm, co
 * @param[in] fnParm
 * @param[in] opts options, NULL for default
 */
-void McoTcpStartServer(SOCKET sock, sa_family_t family,
+void McoTcpStartServer(int sock, sa_family_t family,
 	McoFnStartSession fn, void* fnParm, const McoTcpServerOptions* opts);
 
 /*

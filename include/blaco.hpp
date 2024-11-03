@@ -122,7 +122,7 @@ namespace bl {
     *   @retval <>0 failed, call BlGetLastError() for error code
     *   @retval =0 ok
     */
-    inline int SockGetLocalAddr(SOCKET sock, SockAddr& addr) {
+    inline int SockGetLocalAddr(int sock, SockAddr& addr) {
         socklen_t addrLen;
         struct sockaddr* addr1 = addr.get_sockaddr(&addrLen);
         return BlSockGetLocalAddr(sock, addr1, &addrLen);
@@ -136,7 +136,7 @@ namespace bl {
     *   @retval <>0 failed, call BlGetLastError() for error code
     *   @retval =0 ok
     */
-    inline int SockGetPeerAddr(SOCKET sock, SockAddr& addr) {
+    inline int SockGetPeerAddr(int sock, SockAddr& addr) {
         socklen_t addrLen;
         struct sockaddr* addr1 = addr.get_sockaddr(&addrLen);
         return BlSockGetPeerAddr(sock, addr1, &addrLen);
@@ -155,7 +155,7 @@ namespace bl {
     };
 
     struct LazyAccept : LazyIoBase<BlTcpAccept_t, int> {
-        LazyAccept(SOCKET sock, sa_family_t family=AF_INET, SockAddr* peer=nullptr) {
+        LazyAccept(int sock, sa_family_t family=AF_INET, SockAddr* peer=nullptr) {
             peerLen = sizeof(peer->addr);
             BlInitTcpAccept(this, sock, family, peer? peer->get_sockaddr(): nullptr, &peerLen, onCompleted);
         }
@@ -169,7 +169,7 @@ namespace bl {
     };
 
     struct LazyConnect : LazyIoBase<BlTcpConnect_t, int> {
-        LazyConnect(SOCKET sock, const SockAddr& addr) {
+        LazyConnect(int sock, const SockAddr& addr) {
             BlInitTcpConnect(this, sock, addr.get_sockaddr(nullptr), onCompleted);
         }
 
@@ -180,7 +180,7 @@ namespace bl {
     };
 
     struct LazySend : LazyIoBase<BlSockSend_t, int> {
-        LazySend(SOCKET sock, const void* buf, uint32_t len, int flags) {
+        LazySend(int sock, const void* buf, uint32_t len, int flags) {
             BlInitSockSend(this, sock, buf, len, flags, onCompleted);
         }
 
@@ -191,7 +191,7 @@ namespace bl {
     };
 
     struct LazySendVec : LazyIoBase<BlSockSendVec_t, int> {
-        LazySendVec(SOCKET sock, const iovec* bufVec, size_t bufCnt, int flags) {
+        LazySendVec(int sock, const iovec* bufVec, size_t bufCnt, int flags) {
             BlInitSockSendVec(this, sock, bufVec, bufCnt, flags, onCompleted);
         }
 
@@ -202,7 +202,7 @@ namespace bl {
     };
 
     struct LazySendTo : LazyIoBase<BlSockSendTo_t, int> {
-        LazySendTo(SOCKET sock, const SockAddr& addr, const void* buf, uint32_t len, int flags) {
+        LazySendTo(int sock, const SockAddr& addr, const void* buf, uint32_t len, int flags) {
             BlInitSockSendTo(this, sock, addr.get_sockaddr(), buf, len, flags, onCompleted);
         }
 
@@ -213,7 +213,7 @@ namespace bl {
     };
 
     struct LazySendVecTo : LazyIoBase<BlSockSendVecTo_t, int> {
-        LazySendVecTo(SOCKET sock, const SockAddr& addr,
+        LazySendVecTo(int sock, const SockAddr& addr,
             const iovec* bufVec, size_t bufCnt, int flags) {
             BlInitSockSendVecTo(this, sock, addr.get_sockaddr(), bufVec, bufCnt, flags, onCompleted);
         }
@@ -225,7 +225,7 @@ namespace bl {
     };
 
     struct LazyMustSend : LazyIoBase<BlSockMustSend_t, int> {
-        LazyMustSend(SOCKET sock, const void* buf, uint32_t len, int flags) {
+        LazyMustSend(int sock, const void* buf, uint32_t len, int flags) {
             BlInitSockMustSend(this, sock, buf, len, flags, onCompleted);
         }
 
@@ -236,7 +236,7 @@ namespace bl {
     };
 
     struct LazyMustSendVec : LazyIoBase<BlSockMustSendVec_t, int> {
-        LazyMustSendVec(SOCKET sock, const iovec* bufVec, size_t bufCnt, int flags) {
+        LazyMustSendVec(int sock, const iovec* bufVec, size_t bufCnt, int flags) {
             BlInitSockMustSendVec(this, sock, bufVec, bufCnt, flags, onCompleted);
         }
 
@@ -247,7 +247,7 @@ namespace bl {
     };
 
     struct LazyRecv : LazyIoBase<BlSockRecv_t, int> {
-        LazyRecv(SOCKET sock, void* buf, uint32_t len, int flags) {
+        LazyRecv(int sock, void* buf, uint32_t len, int flags) {
             BlInitSockRecv(this, sock, buf, len, flags, onCompleted);
         }
 
@@ -258,7 +258,7 @@ namespace bl {
     };
 
     struct LazyRecvVec : LazyIoBase<BlSockRecvVec_t, int> {
-        LazyRecvVec(SOCKET sock, iovec* bufVec, size_t bufCnt, int flags) {
+        LazyRecvVec(int sock, iovec* bufVec, size_t bufCnt, int flags) {
             BlInitSockRecvVec(this, sock, bufVec, bufCnt, flags, onCompleted);
         }
 
@@ -269,7 +269,7 @@ namespace bl {
     };
 
     struct LazyRecvFrom : LazyIoBase<BlSockRecvFrom_t, int> {
-        LazyRecvFrom(SOCKET sock, SockAddr& addr, void* buf, uint32_t len, int flags) {
+        LazyRecvFrom(int sock, SockAddr& addr, void* buf, uint32_t len, int flags) {
             addrLen = sizeof(addr.addr);
             BlInitSockRecvFrom(this, sock, addr.get_sockaddr(), &addrLen,
                 buf, len, flags, onCompleted);
@@ -284,7 +284,7 @@ namespace bl {
     };
 
     struct LazyRecvVecFrom : LazyIoBase<BlSockRecvVecFrom_t, int> {
-        LazyRecvVecFrom(SOCKET sock, SockAddr& addr, iovec* bufVec, size_t bufCnt, int flags) {
+        LazyRecvVecFrom(int sock, SockAddr& addr, iovec* bufVec, size_t bufCnt, int flags) {
             addrLen = sizeof(addr.addr);
             BlInitSockRecvVecFrom(this, sock, addr.get_sockaddr(), &addrLen,
                 bufVec, bufCnt, flags, onCompleted);
@@ -299,7 +299,7 @@ namespace bl {
     };
 
     struct LazyMustRecv : LazyIoBase<BlSockMustRecv_t, int> {
-        LazyMustRecv(SOCKET sock, void* buf, uint32_t len, int flags) {
+        LazyMustRecv(int sock, void* buf, uint32_t len, int flags) {
             BlInitSockMustRecv(this, sock, buf, len, flags, onCompleted);
         }
 
@@ -310,7 +310,7 @@ namespace bl {
     };
 
     struct LazyMustRecvVec : LazyIoBase<BlSockMustRecvVec_t, int> {
-        LazyMustRecvVec(SOCKET sock, iovec* bufVec, size_t bufCnt, int flags) {
+        LazyMustRecvVec(int sock, iovec* bufVec, size_t bufCnt, int flags) {
             BlInitSockMustRecvVec(this, sock, bufVec, bufCnt, flags, onCompleted);
         }
 
@@ -321,7 +321,7 @@ namespace bl {
     };
 
     struct LazyTcpClose : LazyIoBase<BlTcpClose_t, int> {
-        LazyTcpClose(SOCKET sock) {
+        LazyTcpClose(int sock) {
             BlInitTcpClose(this, sock, onCompleted);
         }
 
@@ -332,7 +332,7 @@ namespace bl {
     };
 
     struct LazyTcpShutdown : LazyIoBase<BlTcpShutdown_t, int> {
-        LazyTcpShutdown(SOCKET sock, int how) {
+        LazyTcpShutdown(int sock, int how) {
             BlInitTcpShutdown(this, sock, how, onCompleted);
         }
 
@@ -351,7 +351,7 @@ namespace bl {
     *   @retval ret<0, -ret is the error code
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto TcpConnect(SOCKET sock, const SockAddr& addr) {
+    inline auto TcpConnect(int sock, const SockAddr& addr) {
         return LazyConnect(sock, addr);
     }
 
@@ -365,7 +365,7 @@ namespace bl {
     *   @retval ret<0, -ret is the error code, *peer not modified.
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto TcpAccept(SOCKET sock, sa_family_t family, SockAddr* peer) noexcept {
+    inline auto TcpAccept(int sock, sa_family_t family, SockAddr* peer) noexcept {
         return LazyAccept(sock, family, peer);
     }
 
@@ -380,7 +380,7 @@ namespace bl {
     *   @retval ret<0, -ret is the error code.
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockSend(SOCKET sock, const void* buf, uint32_t n, int flags = 0) noexcept {
+    inline auto SockSend(int sock, const void* buf, uint32_t n, int flags = 0) noexcept {
         return LazySend(sock, buf, n, flags);
     }
 
@@ -396,7 +396,7 @@ namespace bl {
     * @note bufCnt should be >0 and <= MAX_BUFS_IN_IOVEC(8), else get an EINVAL err
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockSendVec(SOCKET sock, const iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
+    inline auto SockSendVec(int sock, const iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
         return LazySendVec(sock, bufVec, bufCnt, flags);
     }
 
@@ -412,7 +412,7 @@ namespace bl {
     *   @retval ret<0, -ret is the error code.
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockSendTo(SOCKET sock, const SockAddr& addr, const void* buf, uint32_t n, int flags = 0) noexcept {
+    inline auto SockSendTo(int sock, const SockAddr& addr, const void* buf, uint32_t n, int flags = 0) noexcept {
         return LazySendTo(sock, addr, buf, n, flags);
     }
 
@@ -429,7 +429,7 @@ namespace bl {
     * @note bufCnt should be >0 and <= MAX_BUFS_IN_IOVEC(8), else get an EINVAL err
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockSendVecTo(SOCKET sock, const SockAddr& addr, const iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
+    inline auto SockSendVecTo(int sock, const SockAddr& addr, const iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
         return LazySendVecTo(sock, addr, bufVec, bufCnt, flags);
     }
 
@@ -444,7 +444,7 @@ namespace bl {
     *   @retval ret<0, -ret is the error code.
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockRecv(SOCKET sock, void* buf, uint32_t n, int flags = 0) noexcept {
+    inline auto SockRecv(int sock, void* buf, uint32_t n, int flags = 0) noexcept {
         return LazyRecv(sock, buf, n, flags);
     }
 
@@ -460,7 +460,7 @@ namespace bl {
     * @note bufCnt should be >0 and <= MAX_BUFS_IN_IOVEC(8), else get an EINVAL err
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockRecvVec(SOCKET sock, iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
+    inline auto SockRecvVec(int sock, iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
         return LazyRecvVec(sock, bufVec, bufCnt, flags);
     }
 
@@ -476,7 +476,7 @@ namespace bl {
     *   @retval ret<0, -ret is the error code.
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockRecvFrom(SOCKET sock, SockAddr& addr, char* buf, uint32_t n, int flags = 0) noexcept {
+    inline auto SockRecvFrom(int sock, SockAddr& addr, char* buf, uint32_t n, int flags = 0) noexcept {
         return LazyRecvFrom(sock, addr, buf, n, flags);
     }
 
@@ -493,7 +493,7 @@ namespace bl {
     * @note bufCnt should be >0 and <= MAX_BUFS_IN_IOVEC(8), else get an EINVAL err
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockRecvVecFrom(SOCKET sock, SockAddr& addr, iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
+    inline auto SockRecvVecFrom(int sock, SockAddr& addr, iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
         return LazyRecvVecFrom(sock, addr, bufVec, bufCnt, flags);
     }
 
@@ -508,7 +508,7 @@ namespace bl {
     *   @retval err<>0, the error code.
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockMustRecv(SOCKET sock, void* buf, uint32_t n, int flags = 0) noexcept {
+    inline auto SockMustRecv(int sock, void* buf, uint32_t n, int flags = 0) noexcept {
         return LazyMustRecv(sock, buf, n, flags);
     }
 
@@ -524,7 +524,7 @@ namespace bl {
     * @note bufCnt should be >0 and <= MAX_BUFS_IN_IOVEC(8), else get an EINVAL err
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockMustRecvVec(SOCKET sock, iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
+    inline auto SockMustRecvVec(int sock, iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
         return LazyMustRecvVec(sock, bufVec, bufCnt, flags);
     }
 
@@ -539,7 +539,7 @@ namespace bl {
     *   @retval err<>0, the error code.
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockMustSend(SOCKET sock, const void* buf, uint32_t n, int flags = 0) noexcept {
+    inline auto SockMustSend(int sock, const void* buf, uint32_t n, int flags = 0) noexcept {
         return LazyMustSend(sock, buf, n, flags);
     }
 
@@ -555,7 +555,7 @@ namespace bl {
     * @note bufCnt should be >0 and <= MAX_BUFS_IN_IOVEC(8), else get an EINVAL err
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto SockMustSendVec(SOCKET sock, const iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
+    inline auto SockMustSendVec(int sock, const iovec* bufVec, size_t bufCnt, int flags = 0) noexcept {
         return LazyMustSendVec(sock, bufVec, bufCnt, flags);
     }
 
@@ -567,7 +567,7 @@ namespace bl {
     *   @retval err<>0, the error code.
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto TcpShutdown(SOCKET sock, int how) noexcept {
+    inline auto TcpShutdown(int sock, int how) noexcept {
         return LazyTcpShutdown(sock, how);
     }
 
@@ -579,14 +579,14 @@ namespace bl {
     *   @retval err<>0, the error code.
     */
     [[BLACO_AWAIT_HINT]]
-    inline auto TcpClose(SOCKET sock) noexcept {
+    inline auto TcpClose(int sock) noexcept {
         return LazyTcpClose(sock);
     }
 
     typedef std::function<void(const char*, int)> FnTcpServerLog;
-    typedef std::function<task<void>(SOCKET, const struct sockaddr&, FnTcpServerLog fnLog)> FnStartTcpSession;
+    typedef std::function<task<void>(int, const struct sockaddr&, FnTcpServerLog fnLog)> FnStartTcpSession;
 
-    inline task<void> _TcpAcceptLoop(SOCKET sock, sa_family_t family, FnStartTcpSession fn, FnTcpServerLog fnLog) {
+    inline task<void> _TcpAcceptLoop(int sock, sa_family_t family, FnStartTcpSession fn, FnTcpServerLog fnLog) {
         SockAddr peer;
         for (;;) {
             int r = co_await TcpAccept(sock, family, &peer);
@@ -601,12 +601,12 @@ namespace bl {
     /*
     * @brief Start a TCP server
     * @param[in] sock the listening socket of server
-    * @param[in] fn a function object of type task<void>(SOCKET sessionSock, const SockAddr& peer)
+    * @param[in] fn a function object of type task<void>(int sessionSock, const SockAddr& peer)
     * @param[in] fnLog a function object of type void(const char* s, int r), for logging
     * @param[in] numConcurrentAccepts num of concurrent accept calls to be post into ioworkers
     * @warning In fn, peer is a temp object, you should copy it ASAP before next suspend point of the current coroutine.
     */
-    inline void TcpStartServer(SOCKET sock, sa_family_t family, FnStartTcpSession fn, FnTcpServerLog fnLog, size_t numConcurrentAccepts = 0) {
+    inline void TcpStartServer(int sock, sa_family_t family, FnStartTcpSession fn, FnTcpServerLog fnLog, size_t numConcurrentAccepts = 0) {
         if (numConcurrentAccepts == 0)
             numConcurrentAccepts = g_numCpus;
         for (size_t i = 0; i < numConcurrentAccepts; ++i) {
