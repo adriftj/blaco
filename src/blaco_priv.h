@@ -52,8 +52,10 @@ static int DeleteTimerInWorker(Worker* worker, uint64_t id) {
 	auto it = timers.find(id);
 	if (it == timers.end())
 		return -1;
-	worker->timerQ.erase(it->second);
+	auto ti = it->second;
+	worker->timerQ.erase(ti);
 	timers.erase(it);
+	free(ti);
 	return 0;
 }
 

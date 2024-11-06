@@ -20,19 +20,19 @@ extern "C" {
 #define BL_kSocket       (1<<BL_KSHIFT)
 #define BL_kTaskCallback (2<<BL_KSHIFT)
 
-extern HANDLE g_hIocp;
-extern LPFN_ACCEPTEX g_AcceptEx;
-extern LPFN_CONNECTEX g_ConnectEx;
-extern LPFN_DISCONNECTEX g_DisconnectEx;
+extern HANDLE BL_gIocp;
+extern LPFN_ACCEPTEX BL_gAcceptEx;
+extern LPFN_CONNECTEX BL_gConnectEx;
+extern LPFN_DISCONNECTEX BL_gDisconnectEx;
 
 INLINE void BlPostTask(BlTaskCallback cb, void* parm, bool isIoTask_unused) {
 #if BL_BITNESS == 64
 	DWORD lo = (size_t)parm;
 	DWORD hi = ((size_t)parm) >> 32;
 	// because in 64bit os, just lower 47bits of pointer(address) used 
-	PostQueuedCompletionStatus(g_hIocp, lo, (BL_kTaskCallback | hi), (LPOVERLAPPED)cb);
+	PostQueuedCompletionStatus(BL_gIocp, lo, (BL_kTaskCallback | hi), (LPOVERLAPPED)cb);
 #elif BL_BITNESS == 32
-	PostQueuedCompletionStatus(g_hIocp, (DWORD)parm, BL_kTaskCallback, (LPOVERLAPPED)cb);
+	PostQueuedCompletionStatus(BL_gIocp, (DWORD)parm, BL_kTaskCallback, (LPOVERLAPPED)cb);
 #endif
 }
 
@@ -224,7 +224,7 @@ INLINE bool BlDoTcpAccept(BlTcpAccept_t* io) {
 	else
 		return _BlOnTcpAcceptOk(io, -1, EINVAL), false;
 
-	BOOL b = g_AcceptEx(io->listenSock, aSock, io->tmpBuf, 0,
+	BOOL b = BL_gAcceptEx(io->listenSock, aSock, io->tmpBuf, 0,
 		sizeof(BlSockAddr), sizeof(BlSockAddr), NULL, &io->base.ov);
 	if (b)
 		return _BlOnTcpAcceptOk(io, aSock, 0), false;
@@ -268,7 +268,7 @@ INLINE bool BlDoTcpConnect(BlTcpConnect_t* io) {
 		io->base.ret = -BlGetLastError();
 		return false;
 	}
-	BOOL b = g_ConnectEx(io->sock, io->addr, BlGetSockAddrLen(io->addr), NULL, 0, NULL, &io->base.ov);
+	BOOL b = BL_gConnectEx(io->sock, io->addr, BlGetSockAddrLen(io->addr), NULL, 0, NULL, &io->base.ov);
 	if (b) {
 		_BlOnTcpConnectOk(io, 0);
 		return false;
@@ -727,7 +727,7 @@ INLINE void BlInitTcpClose(BlTcpClose_t* io, int sock, BlOnCompletedAio onComple
 }
 
 INLINE bool BlDoTcpClose(BlTcpClose_t* io) {
-	BOOL b = g_DisconnectEx(io->sock, &io->base.ov, 0, 0);
+	BOOL b = BL_gDisconnectEx(io->sock, &io->base.ov, 0, 0);
 	if (b) {
 		BlSockClose(io->sock);
 		io->base.ret = 0;
@@ -752,7 +752,7 @@ INLINE void BlInitTcpShutdown(BlTcpShutdown_t* io, int sock, int how, BlOnComple
 }
 
 INLINE bool BlDoTcpShutdown(BlTcpShutdown_t* io) {
-	BOOL b = g_DisconnectEx(io->sock, &io->base.ov, 0, 0);
+	BOOL b = BL_gDisconnectEx(io->sock, &io->base.ov, 0, 0);
 	if (b) {
 		io->base.ret = 0;
 		return false;

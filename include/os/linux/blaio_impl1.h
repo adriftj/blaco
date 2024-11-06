@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-extern size_t g_numCpus;
+extern size_t BL_gNumCpus;
 
 /* BlFileOpen() flags supported on this platform: */
 static const int
@@ -115,7 +115,7 @@ INLINE void BlSetLastError(int err) {
 
 typedef struct tagBlAioBase BlAioBase;
 typedef void (*_BlOnSqe)(BlAioBase* base, struct io_uring_sqe* sqe);
-typedef void (*_BlOnCqe)(BlAioBase* base, int r);
+typedef void (*_BlOnCqe)(BlAioBase* base, int r, uint32_t flags);
 typedef void (*BlOnCompletedAio)(void* coro);
 struct tagBlAioBase {
 	BlAioBase* next;
@@ -132,7 +132,7 @@ struct tagBlAioBase {
 #define _BLAIOBASE_INIT(fSqe, fCqe) _BLAIOBASE_INITX(fSqe, fCqe)
 #define _BLAIOBASE_INITMSG(fSqe, fCqe) _BLAIOBASE_INITX(fSqe, fCqe)
 
-void _BlOnCqeAio(BlAioBase* io, int r);
+void _BlOnCqeAio(BlAioBase* io, int r, uint32_t flags);
 bool _BlDoAio(BlAioBase* io);
 
 typedef struct {
@@ -266,7 +266,7 @@ typedef struct {
 } BlSockMustSend_t;
 
 void _BlOnSqeSockMustSend(BlSockMustSend_t* io, struct io_uring_sqe* sqe);
-void _BlOnCqeSockMustSend(BlSockMustSend_t* io, int r);
+void _BlOnCqeSockMustSend(BlSockMustSend_t* io, int r, uint32_t flags);
 
 INLINE void BlInitSockMustSend(BlSockMustSend_t* io, int sock,
 	const void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
@@ -283,7 +283,7 @@ typedef struct {
 	_BlSockMsgMembers
 } BlSockMustSendVec_t;
 
-void _BlOnCqeSockMustSendVec(BlSockMustSendVec_t* io, int r);
+void _BlOnCqeSockMustSendVec(BlSockMustSendVec_t* io, int r, uint32_t flags);
 
 INLINE void BlInitSockMustSendVec(BlSockMustSendVec_t* io, int sock,
 	const struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
@@ -331,7 +331,7 @@ typedef struct {
 	socklen_t* addrLen;
 } BlSockRecvFrom_t;
 
-void _BlOnCqeSockRecvFrom(BlSockRecvFrom_t* io, int r);
+void _BlOnCqeSockRecvFrom(BlSockRecvFrom_t* io, int r, uint32_t flags);
 
 INLINE void BlInitSockRecvFrom(BlSockRecvFrom_t* io, int sock, struct sockaddr* addr, socklen_t* addrLen,
 	void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
@@ -351,7 +351,7 @@ typedef struct {
 	socklen_t* addrLen;
 } BlSockRecvVecFrom_t;
 
-void _BlOnCqeSockRecvVecFrom(BlSockRecvVecFrom_t* io, int r);
+void _BlOnCqeSockRecvVecFrom(BlSockRecvVecFrom_t* io, int r, uint32_t flags);
 
 INLINE void BlInitSockRecvVecFrom(BlSockRecvVecFrom_t* io, int sock, struct sockaddr* addr, socklen_t* addrLen,
 	struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {
@@ -374,7 +374,7 @@ typedef struct {
 } BlSockMustRecv_t;
 
 void _BlOnSqeSockMustRecv(BlSockMustRecv_t* io, struct io_uring_sqe* sqe);
-void _BlOnCqeSockMustRecv(BlSockMustRecv_t* io, int r);
+void _BlOnCqeSockMustRecv(BlSockMustRecv_t* io, int r, uint32_t flags);
 
 INLINE void BlInitSockMustRecv(BlSockMustRecv_t* io, int sock,
 	void* buf, uint32_t len, int flags, BlOnCompletedAio onCompleted) {
@@ -391,7 +391,7 @@ typedef struct {
 	_BlSockMsgMembers
 } BlSockMustRecvVec_t;
 
-void _BlOnCqeSockMustRecvVec(BlSockMustRecvVec_t* io, int r);
+void _BlOnCqeSockMustRecvVec(BlSockMustRecvVec_t* io, int r, uint32_t flags);
 
 INLINE void BlInitSockMustRecvVec(BlSockMustRecvVec_t* io, int sock,
 	struct iovec* bufVec, size_t bufCnt, int flags, BlOnCompletedAio onCompleted) {

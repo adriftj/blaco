@@ -292,8 +292,8 @@ MCO_API mco_result mco_create(mco_coro** out_co, const mco_desc* desc);         
 MCO_API mco_result mco_destroy(mco_coro* co);                                   /* Uninitialize and deallocate the coroutine, may fail if it's not dead or suspended. */
 MCO_API mco_result mco_resume(mco_coro* co);                                    /* Starts or continues the execution of the coroutine. */
 MCO_API mco_result mco_yield();                                                 /* Suspends the execution of running coroutine. */
-MCO_API mco_result mco_resume_mt(mco_coro* co);                                 /* Starts or continues the execution of the coroutine. */
-MCO_API mco_result mco_yield_mt();                                              /* Suspends the execution of running coroutine. */
+MCO_API mco_result mco_resume_mt(mco_coro* co);                                 /* Starts or continues the execution of the coroutine with multithreading. */
+MCO_API mco_result mco_yield_mt();                                              /* Suspends the execution of running coroutine with multithreading. */
 MCO_API mco_state mco_status(const mco_coro* co);                               /* Returns the status of the coroutine. */
 MCO_API const void* mco_get_user_data(const mco_coro* co);                      /* Get coroutine user data supplied on coroutine creation. */
 
@@ -306,6 +306,7 @@ MCO_API size_t mco_get_storage_size(mco_coro* co);              /* Get the total
 
 /* Misc functions. */
 MCO_API mco_coro* mco_running(void);                        /* Returns the running coroutine for the current thread. */
+MCO_API void mco_thread_cleanup(void);                      /* Cleanup some resources(such as main context) of current thread, should call in the main coroutine and before thread exits. */
 
 #ifdef __cplusplus
 }

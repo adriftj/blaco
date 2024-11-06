@@ -1293,6 +1293,14 @@ mco_coro* mco_running(void) {
 }
 #endif
 
+void mco_thread_cleanup(void) {
+    assert(mco_running() == NULL);
+    if (_mco_main_ctxbuf) {
+        free(_mco_main_ctxbuf);
+        _mco_main_ctxbuf = NULL;
+    }
+}
+
 #ifdef __cplusplus
 }
 #endif

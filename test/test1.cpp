@@ -9,7 +9,7 @@
 #include "blaco.hpp"
 
 bl::task<void> test1(int x) {
-	std::cout << "Running coroutine " << x << " in the thread id=" << std::this_thread::get_id() << std::endl;
+	std::cout << "Running coroutine " << x << " in thread " << std::this_thread::get_id() << std::endl;
 	co_return;
 }
 
@@ -26,7 +26,7 @@ TEST_CASE("test init and go") {
 }
 
 void taskcallback1(std::string* str) {
-	std::cout << "Got string[" << *str << "] in the thread id=" << std::this_thread::get_id() << std::endl;
+	std::cout << "Got string[" << *str << "] in thread " << std::this_thread::get_id() << std::endl;
 	delete str;
 }
 
@@ -62,7 +62,7 @@ bl::task<void> echo(int sock) {
 
 const char* echo_test_unix_server_path = "./echo_test_unix";
 
-int echoserver(sa_family_t family, int n) {
+int echoserver(sa_family_t family, int n, UINT64& h) {
 	std::cout << "Echo server started in thread " << std::this_thread::get_id() << std::endl;
 	int sockListen;
 	if (family == AF_INET || family == AF_INET6)
@@ -74,12 +74,12 @@ int echoserver(sa_family_t family, int n) {
 	if (sockListen < 0)
 		std::cout << "Failed to create server socket:err=" << BlGetLastError() << std::endl;
 	REQUIRE(sockListen >= 0);
-	bl::TcpStartServer(sockListen, family,
+	h = bl::TcpStartServer(sockListen, family,
 		[](int sock, const struct sockaddr& peer, bl::FnTcpServerLog fnLog) {
 			bl::SockAddr aPeer(peer);
 			std::cout << "Accept a connection from: " << aPeer.to_str() << std::endl;
 			return echo(sock);
-		},
+		}, true,
 		[](const char* s, int r) {
 			std::cout << s << "[" << r << "]" << std::endl;
 		},
@@ -127,11 +127,13 @@ bl::task<void> echoclient(sa_family_t family, int i) {
 
 TEST_CASE("test echo server ipv4") {
 	BlInit(0, 0, 0);
-	int sockListen = echoserver(AF_INET, 2);
+	UINT64 hLoop = 0;
+	int sockListen = echoserver(AF_INET, 2, hLoop);
 	for (int i = 0; i < 2; ++i)
 		bl::go(echoclient(AF_INET, i).get_handle());
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
+	REQUIRE(BlSockStopAcceptLoop(hLoop));
+	std::this_thread::sleep_for(std::chrono::seconds(1));
 	BlExitNotify();
 	BlWaitExited();
 	BlSockClose(sockListen);
@@ -139,11 +141,13 @@ TEST_CASE("test echo server ipv4") {
 
 TEST_CASE("test echo server ipv6") {
 	BlInit(0, 0, 0);
-	int sockListen = echoserver(AF_INET6, 2);
+	UINT64 hLoop = 0;
+	int sockListen = echoserver(AF_INET6, 2, hLoop);
 	for (int i = 0; i < 2; ++i)
 		bl::go(echoclient(AF_INET6, i).get_handle());
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
+	REQUIRE(BlSockStopAcceptLoop(hLoop));
+	std::this_thread::sleep_for(std::chrono::seconds(1));
 	BlExitNotify();
 	BlWaitExited();
 	BlSockClose(sockListen);
@@ -151,42 +155,52 @@ TEST_CASE("test echo server ipv6") {
 
 TEST_CASE("test echo server unix domain socket") {
 	BlInit(0, 0, 0);
-	int sockListen = echoserver(AF_UNIX, 2);
+	UINT64 hLoop = 0;
+	int sockListen = echoserver(AF_UNIX, 2, hLoop);
 	for (int i = 0; i < 2; ++i)
 		bl::go(echoclient(AF_UNIX, i).get_handle());
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
+	REQUIRE(BlSockStopAcceptLoop(hLoop));
+	std::this_thread::sleep_for(std::chrono::seconds(1));
 	BlExitNotify();
 	BlWaitExited();
 	BlSockClose(sockListen);
 }
 
-bl::task<int, false> corotest1() {
+bl::task<int, false, true> corotest1() {
+	std::cout << "corotest1: in thread " << std::this_thread::get_id() << std::endl;
 	co_await bl::goIo();
+	std::cout << "corotest1: in thread " << std::this_thread::get_id() << std::endl;
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 	std::cout << "corotest1: after sleep" << std::endl;
 	co_return 1111;
 }
 
-bl::task<int, false> corotest2() {
+bl::task<int, false, true> corotest2() {
+	std::cout << "corotest2: in thread " << std::this_thread::get_id() << std::endl;
 	co_await bl::goOther();
+	std::cout << "corotest2: in thread " << std::this_thread::get_id() << std::endl;
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 	std::cout << "corotest2: after sleep" << std::endl;
 	co_return 22;
 }
 
 bl::task<void, false> corotest() {
-	int x1 = co_await corotest1();
-	std::cout << "corotest: corotest1 return " << x1 << std::endl;
+	std::cout << "corotest: in thread " << std::this_thread::get_id() << std::endl;
+	bl::task<int, false, true> co = corotest1();
+	auto co1(std::move(co));
+	int x1 = co_await co1;
+	std::cout << "corotest: in thread " << std::this_thread::get_id() << ", corotest1 return " << x1 << std::endl;
 	REQUIRE(x1 == 1111);
 	int x2 = co_await corotest2();
-	std::cout << "corotest: corotest2 return " << x2 << std::endl;
+	std::cout << "corotest: in thread " << std::this_thread::get_id() << ", corotest2 return " << x2 << std::endl;
 	REQUIRE(x2 == 22);
 }
 
 TEST_CASE("test co_await coroutine") {
 	BlInit(0, 0, 0);
 	corotest();
+	std::cout << "test co_await coroutine: in thread " << std::this_thread::get_id() << std::endl;
 	std::this_thread::sleep_for(std::chrono::seconds(3));
 	BlExitNotify();
 	BlWaitExited();

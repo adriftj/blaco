@@ -32,6 +32,7 @@ extern "C" {
 typedef char BlPathChar;
 typedef char* SOCKPARM;
 typedef int BlEvent;
+typedef uint64_t UINT64;
 #define INFINITE ((uint32_t)-1) 
 #define E_PEER_CLOSED ENOSPC
 #define BL_INVALID_EVENT ((int)-1)

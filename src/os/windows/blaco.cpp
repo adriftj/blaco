@@ -1,14 +1,39 @@
 #include <thread>
+#include <algorithm>
 #include <set>
-#include <unordered_map>
+#include <map>
 #include <tuple>
 #include <queue>
-#include "blaio.h"
+#include "oslock.h"
+#include "blaco.hpp"
+#include "minicoro.h"
+#include "../../timer_priv.h"
 
-HANDLE g_hIocp = NULL;
-LPFN_ACCEPTEX g_AcceptEx = NULL;
-LPFN_CONNECTEX g_ConnectEx = NULL;
-LPFN_DISCONNECTEX g_DisconnectEx = NULL;
+LPFN_ACCEPTEX BL_gAcceptEx = NULL;
+LPFN_CONNECTEX BL_gConnectEx = NULL;
+LPFN_DISCONNECTEX BL_gDisconnectEx = NULL;
+
+HANDLE BL_gIocp = NULL;
+
+struct Worker : public TimerMgr {
+};
+BL_THREAD_LOCAL Worker* st_worker = nullptr;
+
+static std::set<std::tuple<int, int, int>> s_canSocketSkipNotify;
+static Worker* s_workers = nullptr;
+static HANDLE s_initSema = NULL;
+static size_t s_nextWorker = 0;
+static bool s_exitApplication = false;
+static size_t s_numWorkers = 0;
+
+struct AcceptLoop {
+	int sock;
+	size_t numAccepts;
+};
+static bl::Mutex s_lockAcceptLoop;
+static std::map<UINT64, AcceptLoop> s_acceptLoops; // first: handle
+static std::map<int, UINT64> s_acceptLoopSocks; // first: sock, second: handle of AcceptLoop
+static UINT64 s_lastAcceptLoopHandle = 0;
 
 static void FatalErr(const char* sErr, const char* file, int line) {
 	DWORD err = GetLastError();
@@ -20,27 +45,25 @@ static void FatalErr(const char* sErr, const char* file, int line) {
 
 #define FATAL_ERR(sErr) FatalErr((sErr), __FILE__, __LINE__)
 
-static std::set<std::tuple<int, int, int>> s_canSocketSkipNotify;
-
 static void LoadWsaFuncs() {
 	SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	DWORD dwBytes;
 
 	GUID GuidAcceptEx = WSAID_ACCEPTEX;
 	int ret = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&GuidAcceptEx, sizeof(GuidAcceptEx), &g_AcceptEx, sizeof(g_AcceptEx), &dwBytes, NULL, NULL);
+		&GuidAcceptEx, sizeof(GuidAcceptEx), &BL_gAcceptEx, sizeof(BL_gAcceptEx), &dwBytes, NULL, NULL);
 	if (ret == SOCKET_ERROR)
 		FATAL_ERR("Can load AcceptEx");
 
 	GUID GuidConnectEx = WSAID_CONNECTEX;
 	ret = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&GuidConnectEx, sizeof(GuidConnectEx), &g_ConnectEx, sizeof(g_ConnectEx), &dwBytes, NULL, NULL);
+		&GuidConnectEx, sizeof(GuidConnectEx), &BL_gConnectEx, sizeof(BL_gConnectEx), &dwBytes, NULL, NULL);
 	if (ret == SOCKET_ERROR)
 		FATAL_ERR("Can load ConnectEx");
 
 	GUID GuidDisconnectEx = WSAID_DISCONNECTEX;
 	ret = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&GuidDisconnectEx, sizeof(GuidDisconnectEx), &g_DisconnectEx, sizeof(g_DisconnectEx), &dwBytes, NULL, NULL);
+		&GuidDisconnectEx, sizeof(GuidDisconnectEx), &BL_gDisconnectEx, sizeof(BL_gDisconnectEx), &dwBytes, NULL, NULL);
 	if (ret == SOCKET_ERROR)
 		FATAL_ERR("Can load DisconnectEx");
 
@@ -79,14 +102,6 @@ static void EnumWsaProtocols() {
 	}
 }
 
-#include "../../timer_priv.h"
-
-struct Worker : public TimerMgr {
-};
-
-static HANDLE s_initSema = NULL;
-static size_t s_nextWorker = 0;
-
 void _BlIoLoop(size_t slot) {
 	Worker* worker = s_workers + slot;
 	st_worker = worker;
@@ -102,14 +117,14 @@ void _BlIoLoop(size_t slot) {
 		lazyio = nullptr;
 		err = 0;
 		toWait = GetWaitTime(&worker->onceTimerQ, &worker->timerMap, &worker->timerQ);
-		if (!::GetQueuedCompletionStatusEx(g_hIocp, &ovEntry, 1, &nEntries, toWait, TRUE)) {
+		if (!::GetQueuedCompletionStatusEx(BL_gIocp, &ovEntry, 1, &nEntries, toWait, TRUE)) {
 			err = GetLastError();
 			if (err == ERROR_SEM_TIMEOUT || err == WAIT_TIMEOUT)
 				continue;
 			if (err == ERROR_ABANDONED_WAIT_0 || err == ERROR_INVALID_HANDLE) // iocp handle is closed
-				return;
+				break;
 			if (nEntries == 1 && !ovEntry.lpOverlapped) {
-				return; // TODO: other reason?
+				break; // TODO: other reason?
 			}
 		}
 		if (nEntries < 1)
@@ -134,12 +149,14 @@ void _BlIoLoop(size_t slot) {
 			assert(false);
 		}
 	}
+
+	mco_thread_cleanup();
 }
 
 int BlSockCreate(sa_family_t family, int sockType, int protocol) {
 	int sock = WSASocket(family, sockType, protocol, NULL, 0, WSA_FLAG_OVERLAPPED);
 	if (sock >= 0) {
-		if (g_hIocp != CreateIoCompletionPort((HANDLE)(intptr_t)sock, g_hIocp, BL_kSocket, 0)) {
+		if (BL_gIocp != CreateIoCompletionPort((HANDLE)(intptr_t)sock, BL_gIocp, BL_kSocket, 0)) {
 			int err = BlGetLastError();
 			BlSockClose(sock);
 			BlSetLastError(err);
@@ -152,19 +169,21 @@ int BlSockCreate(sa_family_t family, int sockType, int protocol) {
 }
 
 void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers) {
-	WSADATA wsadata;
-	if (::WSAStartup(MAKEWORD(2, 2), &wsadata) != 0)
-		FATAL_ERR("Can not initialize winsock");
-	LoadWsaFuncs();
-	EnumWsaProtocols();
+	if (!BL_gDisconnectEx) {
+		WSADATA wsadata;
+		if (::WSAStartup(MAKEWORD(2, 2), &wsadata) != 0)
+			FATAL_ERR("Can not initialize winsock");
+		LoadWsaFuncs();
+		EnumWsaProtocols();
+	}
 
-	g_hIocp = ::CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_numCpus);
-	if (g_hIocp == NULL)
+	BL_gIocp = ::CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, BL_gNumCpus);
+	if (BL_gIocp == NULL)
 		FATAL_ERR("Can not create iocp");
 	if (numIoWorkers == 0)
-		numIoWorkers = g_numCpus;
+		numIoWorkers = BL_gNumCpus;
 	if (numOtherWorkers == 0)
-		numOtherWorkers = g_numCpus;
+		numOtherWorkers = BL_gNumCpus;
 	size_t numWorkers = numIoWorkers + numOtherWorkers;
 	s_numWorkers = numWorkers;
 	if (numWorkers >= 4096)
@@ -204,13 +223,13 @@ inline size_t PickupWorker(bool /*isIoTask*/) {
 
 void BlExitNotify() {
 	s_exitApplication = true;
-	CloseHandle(g_hIocp);
+	CloseHandle(BL_gIocp);
 }
 
 void BlWaitExited() {
 	_BlWaitExited();
-	WSACleanup();
-	g_hIocp = NULL;
+	// WSACleanup(); // Needn't cleanup, all will be cleaned when process exits
+	BL_gIocp = NULL;
 }
 
 int BlFileOpen(const char* fileName, int flags, int mode) {
@@ -381,7 +400,7 @@ int BlFileOpenN(const WCHAR* fileName, int flags, int mode) {
 		return -1;
 	}
 
-	if (g_hIocp != CreateIoCompletionPort(file, g_hIocp, BL_kSocket, 0)) {
+	if (BL_gIocp != CreateIoCompletionPort(file, BL_gIocp, BL_kSocket, 0)) {
 		int err = BlGetLastError();
 		CloseHandle(file);
 		BlSetLastError(err);
@@ -390,4 +409,134 @@ int BlFileOpenN(const WCHAR* fileName, int flags, int mode) {
 
 	SetFileCompletionNotificationModes(file, FILE_SKIP_SET_EVENT_ON_HANDLE | FILE_SKIP_COMPLETION_PORT_ON_SUCCESS);
 	return (int)(intptr_t)file;
+}
+
+static bool _BlDoTcpAccept2(BlTcpAccept_t* io);
+
+static void _BlOnTcpAcceptOk2(BlTcpAccept_t* io, int sock, int err) {
+	if (err == 0) {
+		if (setsockopt(sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&io->listenSock, sizeof(io->listenSock)) != 0)
+			err = WSAGetLastError();
+	}
+	if (err == 0) {
+		// accepted
+		if (io->base.onCompleted) {
+			((BlOnSockAccepted)io->base.onCompleted)(io->base.coro, sock, (struct sockaddr*)(io->tmpBuf + sizeof(BlSockAddr)));
+			_BlDoTcpAccept2(io);
+		}
+	}
+	else {
+		// failed
+		if (io->peer)
+			((BlOnSockAcceptFailure)(io->peer))(io->base.coro, sock, err);
+		BlSockClose(sock);
+		bool stopped = false;
+		{
+			bl::Mutex::Auto autoLock(s_lockAcceptLoop);
+			auto it = s_acceptLoopSocks.find(io->listenSock);
+			if (it != s_acceptLoopSocks.cend()) {
+				auto it2 = s_acceptLoops.find(it->second);
+				if (it2 != s_acceptLoops.end()) {
+					size_t k = --(it2->second.numAccepts);
+					if (k == 0) {
+						s_acceptLoops.erase(it2);
+						s_acceptLoopSocks.erase(it);
+						stopped = true;
+					}
+				}
+			}
+		}
+		BlOnSockAcceptLoopStopped onStopped = (BlOnSockAcceptLoopStopped)io->peerLen;
+		void* coro = io->base.coro;
+		delete io;
+		if (stopped && onStopped)
+			onStopped(coro);
+	}
+}
+
+static void _BlInternalOnCompletedTcpAccept2(BlTcpAccept_t* io, int err, DWORD unused) {
+	_BlOnTcpAcceptOk2(io, io->sock, err);
+}
+
+static void _BlInitTcpAccept2(BlTcpAccept_t* io, int sock, sa_family_t family, BlOnSockAccepted onAccepted,
+			BlOnSockAcceptFailure onFailure, BlOnSockAcceptLoopStopped onStopped, void* parm) {
+	memset(&io->base.ov, 0, sizeof(OVERLAPPED));
+	io->base.internalOnCompleted = (_BlInternalOnCompleted)(_BlInternalOnCompletedTcpAccept2);
+	io->listenSock = sock;
+	io->base.coro = parm;
+	io->base.onCompleted = (BlOnCompletedAio)onAccepted;
+	io->peer = (struct sockaddr*)onFailure;
+	io->peerLen = (socklen_t*)onStopped;
+	io->family = family;
+}
+
+static bool _BlDoTcpAccept2(BlTcpAccept_t* io) {
+	sa_family_t family = io->family;
+	SOCKET aSock;
+	if (family == AF_INET || family == AF_INET6)
+		aSock = BlSockTcp(family == AF_INET6);
+	else if (family == AF_UNIX)
+		aSock = BlSockUnix();
+	else
+		return _BlOnTcpAcceptOk2(io, -1, EINVAL), false;
+
+	BOOL b = BL_gAcceptEx(io->listenSock, aSock, io->tmpBuf, 0,
+		sizeof(BlSockAddr), sizeof(BlSockAddr), NULL, &io->base.ov);
+	if (b)
+		return _BlOnTcpAcceptOk2(io, aSock, 0), false;
+
+	int err = WSAGetLastError();
+	if (err != WSA_IO_PENDING)
+		return _BlOnTcpAcceptOk2(io, aSock, err), false;
+
+	io->sock = aSock;
+	return true;
+}
+
+UINT64 BlSockStartAcceptLoop(int sock, sa_family_t family, size_t numConcurrentAccepts, BlOnSockAccepted onAccepted,
+			BlOnSockAcceptFailure onFailure, BlOnSockAcceptLoopStopped onStopped, void* parm) {
+	if (sock < 0) {
+		BlSetLastError(EINVAL);
+		return 0;
+	}
+	if (numConcurrentAccepts == 0)
+		numConcurrentAccepts = BL_gNumCpus;
+
+	UINT64 h = 0;
+	{
+		bl::Mutex::Auto autoLock(s_lockAcceptLoop);
+		auto it = s_acceptLoopSocks.find(sock);
+		if (it != s_acceptLoopSocks.cend()) {
+			BlSetLastError(EEXIST);
+			return 0;
+		}
+		do {
+			++s_lastAcceptLoopHandle;
+			if (s_lastAcceptLoopHandle == 0)
+				++s_lastAcceptLoopHandle;
+		} while (s_acceptLoops.contains(s_lastAcceptLoopHandle));
+		h = s_lastAcceptLoopHandle;
+		s_acceptLoops.emplace(h, AcceptLoop{ sock, numConcurrentAccepts });
+		s_acceptLoopSocks.emplace(sock, h);
+	}
+
+	for (size_t i = 0; i < numConcurrentAccepts; ++i) {
+		auto* io = new BlTcpAccept_t;
+		_BlInitTcpAccept2(io, sock, family, onAccepted, onFailure, onStopped, parm);
+		_BlDoTcpAccept2(io);
+	}
+	return h;
+}
+
+bool BlSockStopAcceptLoop(UINT64 hLoop) {
+	int sock;
+	{
+		bl::Mutex::Auto autoLock(s_lockAcceptLoop);
+		auto it = s_acceptLoops.find(hLoop);
+		if (it == s_acceptLoops.cend())
+			return false;
+		sock = it->second.sock;
+	}
+	BlCancelIo(sock, NULL);
+	return true;
 }

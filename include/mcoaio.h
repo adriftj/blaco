@@ -295,10 +295,14 @@ typedef void (*McoFnStartSession)(int, const struct sockaddr*, void* parm, const
 * @param[in] family sock address family
 * @param[in] fn session handler
 * @param[in] fnParm
+* @param[in] ioTask will run session handler `fn` as an io task
 * @param[in] opts options, NULL for default
+* @return
+*   @retval 0 error, call BlGetLastError() for error code
+*   @retval other a handle for calling xxx to stop the server
 */
-void McoTcpStartServer(int sock, sa_family_t family,
-	McoFnStartSession fn, void* fnParm, const McoTcpServerOptions* opts);
+UINT64 McoTcpStartServer(int sock, sa_family_t family,
+	McoFnStartSession fn, void* fnParm, bool ioTask, const McoTcpServerOptions* opts);
 
 /*
 * @brief Read file

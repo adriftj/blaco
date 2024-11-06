@@ -43,7 +43,7 @@ static HANDLE OpenDir(const WCHAR* wDir) {
 		FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
 		NULL);
 	if (h != INVALID_HANDLE_VALUE) {
-		if (g_hIocp != CreateIoCompletionPort(h, g_hIocp, BL_kSocket, 0)) {
+		if (BL_gIocp != CreateIoCompletionPort(h, BL_gIocp, BL_kSocket, 0)) {
 			int err = BlGetLastError();
 			CloseHandle(h);
 			BlSetLastError(err);

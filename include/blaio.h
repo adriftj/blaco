@@ -30,7 +30,7 @@ void BlExitNotify();
 */
 void BlWaitExited();
 
-extern size_t g_numCpus;
+extern size_t BL_gNumCpus;
 
 /*
 * @brief if you call BlInit with options&BL_INIT_USE_MAIN_THREAD_AS_WORKER, you should call this function in main thread
@@ -1146,6 +1146,55 @@ INLINE bool BlTcpShutdown(BlTcpShutdown_t* io, int sock, int how, BlOnCompletedA
 
 
 /*
+* @brief Callback function when new connection is accepted
+* @param[in] parm parameter `parm` of `BlSockStartAcceptLoop`
+* @param[in] acceptedSock the socket of new accepted connection
+* @param[in] peer peer addr of the connection
+*/
+typedef void (*BlOnSockAccepted)(void* parm, size_t acceptedSock, const struct sockaddr* peer);
+
+/*
+* @brief Callback function when failed to accept
+* @param[in] parm parameter `parm` of `BlSockStartAcceptLoop`
+* @param[in] sock the listening socket
+* @param[in] err error code of the failure
+*/
+typedef void (*BlOnSockAcceptFailure)(void* parm, int sock, int err);
+
+/*
+* @brief Callback function when accept loop is stopped
+* @param[in] parm parameter `parm` of `BlSockStopAcceptLoop`
+*/
+typedef void (*BlOnSockAcceptLoopStopped)(void* parm);
+
+/*
+* @brief Start accept loop run in thread pool.
+* @param[in] sock the listening socket
+* @param[in] family
+* @param[in] numConcurrentAccepts how many accept calls are initiated at the same time
+* @param[in] onAccepted call when a new connection arrived
+* @param[in] onFailure call when failed to accept, after it return, the accept loop may be stopped.
+* @param[in] onStopped call when the loop is stopped
+* @param[in] parm parameter `parm` for calling onAccepted and onFailure
+* @return
+*   @retval 0 error, call BlGetLastError() for error code
+*   @retval other a handle for calling BlStopAcceptLoop to stop the loop
+* @note Once the accept loop is started, it will run until it fails or be stopped. Use BlStopAcceptLoop to stop it.
+*/
+UINT64 BlSockStartAcceptLoop(int sock, sa_family_t family, size_t numConcurrentAccepts, BlOnSockAccepted onAccepted,
+	BlOnSockAcceptFailure onFailure, BlOnSockAcceptLoopStopped onStopped, void* parm);
+
+/*
+* @brief Stop a accept loop.
+* @param[in] hLoop handle of the accept loop
+* @return
+*   @retval true-hLoop is found, now the loop is being stopped, will be stopped after `onStopped` is called
+*   @retval false-hLoop is not found or stopped before, `onStoppped` won't be called
+*/
+bool BlSockStopAcceptLoop(UINT64 hLoop);
+
+
+/*
 * @brief Open file
 * @param[in] fileName utf-8 encoded, use '/' or '\' as path splitor
 * @param[in] flags standard unix flags, see unix manual page of open
@@ -1165,8 +1214,8 @@ int BlFileOpenN(const WCHAR* fileName, int flags, int mode);
 /*
 * @brief Close file
 * @return
+*   @retval 0 ok
 *   @retval -1 error, call BlGetLastError() for error code
-*   @retval other ok
 */
 int BlFileClose(int f);
 
@@ -1188,8 +1237,8 @@ INLINE bool BlFileWrite(BlFileWrite_t* io, int f, uint64_t offset,
 * @param[in] fd file handle or socket or ...
 * @param[in] io NULL-cancel all I/O of `fd`, other-cancel the specific I/O related to `io`
 * @return
+*   @retval 0 ok
 *   @retval -1 error, call BlGetLastError() for error code
-*   @retval other ok
 */
 int BlCancelIo(int fd, BlAioBase* io);
 

@@ -1,12 +1,9 @@
 #pragma once
 
+#include <unordered_map>
+
 using Duration = std::chrono::milliseconds;
 using TimePoint = std::chrono::system_clock::time_point;
-
-size_t g_numCpus = std::thread::hardware_concurrency();
-
-static bool s_exitApplication = false;
-static size_t s_numWorkers = 0;
 
 struct TimerInfo {
 	uint64_t id;
@@ -44,10 +41,6 @@ struct TimerMgr {
 	TimerQueue timerQ;
 	uint64_t nextTimerId;
 };
-
-struct Worker;
-static Worker* s_workers = nullptr;
-BL_THREAD_LOCAL Worker* st_worker = nullptr;
 
 inline uint32_t GetWaitTimeOnce(TimePoint tNow, std::priority_queue<OnceTimer>* onceTimerQ) {
 	if (onceTimerQ->empty())

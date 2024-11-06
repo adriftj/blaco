@@ -3,11 +3,15 @@
 #include <unordered_map>
 #include <tuple>
 #include <queue>
+#include <map>
 #include <chrono>
 #include <sys/resource.h>
 #include <signal.h>
 #include <semaphore.h>
+#include "utility/defer.hpp"
+#include "oslock.h"
 #include "blaio.h"
+#include "minicoro.h"
 #include "../../timer_priv.h"
 
 // TODO: {{ temporary solution: copy from liburing2.8
@@ -21,19 +25,15 @@ static inline void io_uring_prep_cancel_fd(struct io_uring_sqe* sqe, int fd, uns
 	io_uring_prep_rw(IORING_OP_ASYNC_CANCEL, sqe, fd, NULL, 0, 0);
 	sqe->cancel_flags = (__u32)flags | IORING_ASYNC_CANCEL_FD;
 }
-// TODO: }}
 
-static unsigned s_numSqeEntries = 4096; // default
-
-static void FatalErr(const char* sErr, const char* file, int line) {
-	char errBuf[256];
-	snprintf(errBuf, sizeof(errBuf), "%s(err=%d) in %s:%d", sErr, errno, file, line);
-	//TODO: add log
-	fprintf(stderr, "%s(err=%d) in %s:%d\n", sErr, errno, file, line);
-	throw errBuf;
+#define IORING_ACCEPT_MULTISHOT	(1U << 0)
+static inline void io_uring_prep_multishot_accept(struct io_uring_sqe* sqe,
+	int fd, struct sockaddr* addr,
+	socklen_t* addrlen, int flags) {
+	io_uring_prep_accept(sqe, fd, addr, addrlen, flags);
+	sqe->ioprio |= IORING_ACCEPT_MULTISHOT;
 }
-
-#define FATAL_ERR(sErr) FatalErr((sErr), __FILE__, __LINE__)
+// TODO: }}
 
 struct _BlPostTaskParm {
 	BlTaskCallback cb;
@@ -57,6 +57,13 @@ struct _BlCancelIo_t {
 	BlAioBase* io;
 };
 
+struct _BlMultishotAccept_t {
+	BlAioBase base;
+	int listenSock;
+	BlOnSockAcceptFailure onFailure;
+	BlOnSockAcceptLoopStopped onStopped;
+};
+
 struct Worker : public TimerMgr {
 	io_uring ring;
 	BlAioBase* waitSqeHead;
@@ -72,11 +79,42 @@ struct Worker : public TimerMgr {
 		firstFreeTask(nullptr), numFreeCancels(0), firstFreeCancel(nullptr) {}
 };
 
+BL_THREAD_LOCAL Worker* st_worker = nullptr;
+
+static unsigned s_numSqeEntries = 4096; // default
 static size_t s_numIoWorkers = 0;
 static bool s_initSemaHasInitialized = false;
 static sem_t s_initSema;
 static size_t s_nextIoWorker = 0;
 static size_t s_nextOtherWorker = 0;
+static Worker* s_workers = nullptr;
+static bool s_exitApplication = false;
+static size_t s_numWorkers = 0;
+
+struct SlotAcceptIo {
+	size_t slot;
+	_BlMultishotAccept_t* ioAccept;
+};
+
+struct AcceptLoop {
+	int listenSock;
+	size_t numAccepts;
+	std::vector<SlotAcceptIo> slotAccepts;
+};
+static bl::Mutex s_lockAcceptLoop;
+static std::map<UINT64, AcceptLoop> s_acceptLoops; // first: handle
+static std::map<int, UINT64> s_acceptLoopSocks; // first: sock, second: handle of AcceptLoop
+static UINT64 s_lastAcceptLoopHandle = 0;
+
+static void FatalErr(const char* sErr, const char* file, int line) {
+	char errBuf[256];
+	snprintf(errBuf, sizeof(errBuf), "%s(err=%d) in %s:%d", sErr, errno, file, line);
+	//TODO: add log
+	fprintf(stderr, "%s(err=%d) in %s:%d\n", sErr, errno, file, line);
+	throw errBuf;
+}
+
+#define FATAL_ERR(sErr) FatalErr((sErr), __FILE__, __LINE__)
 
 static void SetLimits() {
 	struct rlimit rl;
@@ -115,9 +153,9 @@ static void _BlOnSqeRecvTask(_BlRecvTask_t* io, struct io_uring_sqe* sqe) {
 	io_uring_sqe_set_data(sqe, io);
 }
 
-static void _BlOnCqeRecvTask(_BlRecvTask_t* io, int r) {
+static void _BlOnCqeRecvTask(_BlRecvTask_t* io, int r, uint32_t flags) {
 	if (r < 0) {
-		// TODO: add log
+		fprintf(stderr, "_BlOnCqeRecvTask: failed %d\n", r);
 		return;
 	}
 	assert(r % sizeof(_BlPostTaskParm) == 0);
@@ -138,7 +176,7 @@ static void _BlOnSqeCancelIo(_BlCancelIo_t* io, struct io_uring_sqe* sqe) {
 	if(io->io)
 		io_uring_prep_cancel(sqe, io->io, IORING_ASYNC_CANCEL_ALL);
 	else
-		io_uring_prep_cancel_fd(sqe, io->fd, IORING_ASYNC_CANCEL_ALL|IORING_ASYNC_CANCEL_FD);
+		io_uring_prep_cancel_fd(sqe, io->fd, IORING_ASYNC_CANCEL_ALL);
 	io_uring_sqe_set_data(sqe, io);
 }
 
@@ -191,7 +229,7 @@ static void SubmitAndWaitCqe(struct io_uring* ring, struct io_uring_cqe** pCqe,
 				return;
 			++tries;
 			if (tries > 64) {
-				usleep(100000); // 100ms
+				usleep(10000); // 10ms
 				tries = 0;
 			}
 		}
@@ -206,6 +244,7 @@ static void _BlIoLoop(size_t slot) {
 	BlAioBase* lazyio;
 	bool hasRecvTask;
 	int r;
+	BlAioBase* head;
 
 	worker->slot = slot;
 	worker->nextTimerId = 0;
@@ -236,12 +275,23 @@ static void _BlIoLoop(size_t slot) {
 		SubmitAndWaitCqe(ring, &cqe, &worker->onceTimerQ, &worker->timerMap, &worker->timerQ);
 		hasRecvTask = false;
 		for (;;) {
+			while ((head = worker->waitSqeHead) != nullptr) {
+				struct io_uring_sqe* sqe = io_uring_get_sqe(ring);
+				if (!sqe)
+					break;
+				worker->waitSqeHead = head->next;
+				if (worker->waitSqeHead == nullptr)
+					worker->waitSqeTail = nullptr;
+				head->onSqe(head, sqe);
+			}
+
 			lazyio = (BlAioBase*)io_uring_cqe_get_data(cqe);
 			assert(lazyio != nullptr);
 			hasRecvTask = (lazyio == &worker->ioRecvTask.base);
 			int res = cqe->res;
+			uint32_t flags = cqe->flags;
 			io_uring_cqe_seen(ring, cqe);
-			lazyio->onCqe(lazyio, res);
+			lazyio->onCqe(lazyio, res, flags);
 			r = io_uring_peek_cqe(ring, &cqe);
 			if (r < 0)
 				break;
@@ -264,22 +314,7 @@ static void _BlIoLoop(size_t slot) {
 		free(p);
 	}
 	st_worker = nullptr;
-}
-
-static void CheckWaitSqeAio() {
-	Worker* worker = (Worker*)st_worker;
-	assert(worker);
-	BlAioBase* head;
-	struct io_uring* ring = &worker->ring;
-	while ((head = worker->waitSqeHead) != nullptr) {
-		struct io_uring_sqe* sqe = io_uring_get_sqe(ring);
-		if (!sqe)
-			return;
-		worker->waitSqeHead = head->next;
-		if (worker->waitSqeHead == nullptr)
-			worker->waitSqeTail = nullptr;
-		head->onSqe(head, sqe);
-	}
+	mco_thread_cleanup();
 }
 
 static void BlockSignals() {
@@ -292,9 +327,9 @@ void BlInit(uint32_t options, size_t numIoWorkers, size_t numOtherWorkers) {
 	SetLimits();
 	BlockSignals();
 	if (numIoWorkers == 0)
-		numIoWorkers = g_numCpus;
+		numIoWorkers = BL_gNumCpus;
 	if (numOtherWorkers == 0)
-		numOtherWorkers = 2*g_numCpus;
+		numOtherWorkers = 2*BL_gNumCpus;
 	s_numIoWorkers = numIoWorkers;
 	size_t numWorkers = numIoWorkers + numOtherWorkers;
 	s_numWorkers = numWorkers;
@@ -339,6 +374,10 @@ inline size_t PickupWorker(bool isIoTask) {
 static bool _BlPostTaskToWorker(size_t slot, BlTaskCallback cb, void* parm) {
 	Worker* worker = st_worker;
 	if (worker) { // inside _BlIoLoop(thread pool)
+		if (slot == worker->slot) {
+			cb(parm);
+			return true;
+		}
 		_BlPostTask_t* ioTask = worker->firstFreeTask;
 		if (ioTask) {
 			--worker->numFreeTasks;
@@ -351,7 +390,7 @@ static bool _BlPostTaskToWorker(size_t slot, BlTaskCallback cb, void* parm) {
 			ioTask = (_BlPostTask_t*)malloc(sizeof(_BlPostTask_t));
 			if (!ioTask) {
 				assert(false);
-				// TODO: add log
+				fprintf(stderr, "_BlPostTaskToWorker: out of memory\n");
 				return false;
 			}
 			_BlInitPostTask(ioTask, slot, cb, parm);
@@ -365,8 +404,7 @@ static bool _BlPostTaskToWorker(size_t slot, BlTaskCallback cb, void* parm) {
 		task.parm = parm;
 		int r = write(s_workers[slot].fdPipe[1], &task, sizeof(task));
 		if (r < 0) {
-			// TODO: add log
-			fprintf(stderr, "write pipe failed, err=%d\n", errno);
+			fprintf(stderr, "_BlPostTaskToWorker: write pipe failed, err=%d\n", errno);
 			return false;
 		}
 	}
@@ -412,7 +450,7 @@ inline void CancelIoInWorker(Worker* worker, int fd, BlAioBase* io) {
 		ioCancel = (_BlCancelIo_t*)malloc(sizeof(_BlCancelIo_t));
 		if (!ioCancel) {
 			assert(false);
-			// TODO: add log
+			fprintf(stderr, "CancelIoInWorker: out of memory\n");
 			return;
 		}
 		_BlInitCancelIo(ioCancel, fd, io);
@@ -442,7 +480,7 @@ bool _BlDoAio(BlAioBase* io) {
 	Worker* worker = (Worker*)st_worker;
 	if (!worker) {
 		io->ret = -ENOTSUP;
-		// TODO: add log
+		fprintf(stderr, "_BlDoAio: Bug? Be called out of thread pool.\n");
 		assert(false);
 		return false;
 	}
@@ -464,15 +502,14 @@ bool _BlDoAio(BlAioBase* io) {
 	return true;
 }
 
-inline void CheckWaitSqeAndCompleteIo(BlAioBase* io) {
-	CheckWaitSqeAio();
+inline void CompleteIo(BlAioBase* io) {
 	if (io->onCompleted)
 		io->onCompleted(io->coro);
 }
 
-void _BlOnCqeAio(BlAioBase* io, int res) {
+void _BlOnCqeAio(BlAioBase* io, int res, uint32_t flags) {
 	io->ret = res;
-	CheckWaitSqeAndCompleteIo(io);
+	CompleteIo(io);
 }
 
 void _BlOnSqeTcpAccept(BlTcpAccept_t* io, struct io_uring_sqe* sqe) {
@@ -500,7 +537,7 @@ void _BlOnSqeSockMustSend(BlSockMustSend_t* io, struct io_uring_sqe* sqe) {
 	io_uring_sqe_set_data(sqe, io);
 }
 
-void _BlOnCqeSockMustSend(BlSockMustSend_t* io, int r) {
+void _BlOnCqeSockMustSend(BlSockMustSend_t* io, int r, uint32_t flags) {
 	if (r > 0) {
 		if (r == (int)io->len)
 			io->base.ret = 0;
@@ -509,17 +546,17 @@ void _BlOnCqeSockMustSend(BlSockMustSend_t* io, int r) {
 			io->buf = ((char*)io->buf)+r;
 			if (_BlDoAio((BlAioBase*)io))
 				return;
-			assert(false); // TODO: add log
+			assert(false);
 		}
 	}
 	else if (r == 0)
 		io->base.ret = -E_PEER_CLOSED;
 	else
 		io->base.ret = r;
-	CheckWaitSqeAndCompleteIo(&io->base);
+	CompleteIo(&io->base);
 }
 
-void _BlOnCqeSockMustSendVec(BlSockMustSendVec_t* io, int r) {
+void _BlOnCqeSockMustSendVec(BlSockMustSendVec_t* io, int r, uint32_t flags) {
 	if (r > 0) {
 		IoVecAdjustAfterIo(&io->msghdr.msg_iov, &io->msghdr.msg_iovlen, r);
 		if (io->msghdr.msg_iovlen <= 0)
@@ -527,14 +564,14 @@ void _BlOnCqeSockMustSendVec(BlSockMustSendVec_t* io, int r) {
 		else {
 			if (_BlDoAio((BlAioBase*)io))
 				return;
-			assert(false); // TODO: add log
+			assert(false);
 		}
 	}
 	else if (r == 0)
 		io->base.ret = -E_PEER_CLOSED;
 	else
 		io->base.ret = r;
-	CheckWaitSqeAndCompleteIo(&io->base);
+	CompleteIo(&io->base);
 }
 
 
@@ -553,21 +590,21 @@ void _BlOnSqeSockMustRecv(BlSockMustRecv_t* io, struct io_uring_sqe* sqe) {
 	io_uring_sqe_set_data(sqe, io);
 }
 
-void _BlOnCqeSockRecvFrom(BlSockRecvFrom_t* io, int r) {
+void _BlOnCqeSockRecvFrom(BlSockRecvFrom_t* io, int r, uint32_t flags) {
 	io->base.ret = r;
 	if (io->addrLen)
 		*io->addrLen = io->msghdr.msg_namelen;
-	CheckWaitSqeAndCompleteIo(&io->base);
+	CompleteIo(&io->base);
 }
 
-void _BlOnCqeSockRecvVecFrom(BlSockRecvVecFrom_t* io, int r) {
+void _BlOnCqeSockRecvVecFrom(BlSockRecvVecFrom_t* io, int r, uint32_t flags) {
 	io->base.ret = r;
 	if (io->addrLen)
 		*io->addrLen = io->msghdr.msg_namelen;
-	CheckWaitSqeAndCompleteIo(&io->base);
+	CompleteIo(&io->base);
 }
 
-void _BlOnCqeSockMustRecv(BlSockMustRecv_t* io, int r) {
+void _BlOnCqeSockMustRecv(BlSockMustRecv_t* io, int r, uint32_t flags) {
 	if (r > 0) {
 		if (r == (int)io->len)
 			io->base.ret = 0;
@@ -576,17 +613,17 @@ void _BlOnCqeSockMustRecv(BlSockMustRecv_t* io, int r) {
 			io->buf = ((char*)io->buf)+r;
 			if (_BlDoAio((BlAioBase*)io))
 				return;
-			assert(false); // TODO: add log
+			assert(false);
 		}
 	}
 	else if (r == 0)
 		io->base.ret = -E_PEER_CLOSED;
 	else
 		io->base.ret = r;
-	CheckWaitSqeAndCompleteIo(&io->base);
+	CompleteIo(&io->base);
 }
 
-void _BlOnCqeSockMustRecvVec(BlSockMustRecvVec_t* io, int r) {
+void _BlOnCqeSockMustRecvVec(BlSockMustRecvVec_t* io, int r, uint32_t flags) {
 	if (r > 0) {
 		IoVecAdjustAfterIo(&io->msghdr.msg_iov, &io->msghdr.msg_iovlen, r);
 		if (io->msghdr.msg_iovlen <= 0)
@@ -594,14 +631,14 @@ void _BlOnCqeSockMustRecvVec(BlSockMustRecvVec_t* io, int r) {
 		else {
 			if (_BlDoAio((BlAioBase*)io))
 				return;
-			assert(false); // TODO: add log
+			assert(false);
 		}
 	}
 	else if (r == 0)
 		io->base.ret = -E_PEER_CLOSED;
 	else
 		io->base.ret = r;
-	CheckWaitSqeAndCompleteIo(&io->base);
+	CompleteIo(&io->base);
 }
 
 
@@ -633,4 +670,124 @@ void _BlOnSqeFileWrite(BlFileWrite_t* io, struct io_uring_sqe* sqe) {
 void _BlOnSqeFileWriteVec(BlFileWriteVec_t* io, struct io_uring_sqe* sqe) {
 	io_uring_prep_writev(sqe, io->f, io->bufs, io->bufCnt, io->offset);
 	io_uring_sqe_set_data(sqe, io);
+}
+
+static void _BlOnSqeMultishotAccept(_BlMultishotAccept_t* io, struct io_uring_sqe* sqe) {
+	io_uring_prep_multishot_accept(sqe, io->listenSock, NULL, NULL, 0);
+	io_uring_sqe_set_data(sqe, io);
+}
+
+static void _BlOnCqeMultishotAccept(_BlMultishotAccept_t* io, int r, uint32_t flags) {
+	if (r >= 0) {
+		// accepted
+		if (io->base.onCompleted) {
+			BlSockAddr peer;
+			socklen_t peerLen = sizeof(peer);
+			BlSockGetPeerAddr(r, &peer.sa, &peerLen);
+			((BlOnSockAccepted)io->base.onCompleted)(io->base.coro, r, &peer.sa);
+			if (!(flags & IORING_CQE_F_MORE)) // else didn't need call _BlDoAio((BlAioBase*)io) because of multishot accept
+				_BlDoAio((BlAioBase*)io);
+		}
+	}
+	else {
+		// failed
+		if (io->onFailure)
+			io->onFailure(io->base.coro, io->listenSock, -r);
+		BlSockClose(io->listenSock);
+		bool stopped = false;
+		{
+			bl::Mutex::Auto autoLock(s_lockAcceptLoop);
+			auto it = s_acceptLoopSocks.find(io->listenSock);
+			if (it != s_acceptLoopSocks.cend()) {
+				auto it2 = s_acceptLoops.find(it->second);
+				if (it2 != s_acceptLoops.end()) {
+					size_t k = --(it2->second.numAccepts);
+					if (k == 0) {
+						s_acceptLoops.erase(it2);
+						s_acceptLoopSocks.erase(it);
+						stopped = true;
+					}
+				}
+			}
+		}
+		BlOnSockAcceptLoopStopped onStopped = io->onStopped;
+		void* coro = io->base.coro;
+		delete io;
+		if (stopped && onStopped)
+			onStopped(coro);
+	}
+}
+
+UINT64 BlSockStartAcceptLoop(int sock, sa_family_t family, size_t numConcurrentAccepts, BlOnSockAccepted onAccepted,
+	BlOnSockAcceptFailure onFailure, BlOnSockAcceptLoopStopped onStopped, void* parm) {
+	if (sock < 0) {
+		BlSetLastError(EINVAL);
+		return 0;
+	}
+	if (numConcurrentAccepts == 0)
+		numConcurrentAccepts = BL_gNumCpus;
+
+	std::vector<SlotAcceptIo> slotAccepts;
+	for (size_t i = 0; i < numConcurrentAccepts; ++i) {
+		auto* io = new _BlMultishotAccept_t;
+		io->base.onSqe = (_BlOnSqe)_BlOnSqeMultishotAccept;
+		io->base.onCqe = (_BlOnCqe)_BlOnCqeMultishotAccept;
+		io->base.onCompleted = (BlOnCompletedAio)onAccepted;
+		io->base.coro = parm;
+		io->listenSock = sock;
+		io->onFailure = onFailure;
+		io->onStopped = onStopped;
+		size_t slot = PickupWorker(true);
+		slotAccepts.emplace_back(slot, io);
+	}
+	bool ok = false;
+	BL_DEFER( if (!ok) {
+		for (auto& slotAccept : slotAccepts)
+			delete slotAccept.ioAccept;
+	});
+
+	UINT64 h = 0;
+	{
+		bl::Mutex::Auto autoLock(s_lockAcceptLoop);
+		auto it = s_acceptLoopSocks.find(sock);
+		if (it != s_acceptLoopSocks.cend()) {
+			for (size_t i = 0; i < numConcurrentAccepts; ++i) {
+			}
+			BlSetLastError(EEXIST);
+			return 0;
+		}
+		do {
+			++s_lastAcceptLoopHandle;
+			if (s_lastAcceptLoopHandle == 0)
+				++s_lastAcceptLoopHandle;
+		} while (s_acceptLoops.contains(s_lastAcceptLoopHandle));
+		h = s_lastAcceptLoopHandle;
+		s_acceptLoops.emplace(h, AcceptLoop{ sock, numConcurrentAccepts, slotAccepts });
+		s_acceptLoopSocks.emplace(sock, h);
+	}
+
+	for (auto& slotAccept : slotAccepts)
+		_BlPostTaskToWorker(slotAccept.slot, (BlTaskCallback)_BlDoAio, slotAccept.ioAccept);
+	ok = true;
+	return h;
+}
+
+bool BlSockStopAcceptLoop(UINT64 hLoop) {
+	std::vector<SlotAcceptIo> slotAccepts;
+	{
+		bl::Mutex::Auto autoLock(s_lockAcceptLoop);
+		auto it = s_acceptLoops.find(hLoop);
+		if (it == s_acceptLoops.cend())
+			return false;
+		slotAccepts = it->second.slotAccepts;
+	}
+	Worker* worker = st_worker;
+	size_t currentSlot = worker ? worker->slot : (size_t)-1;
+	for (auto& slotAccept: slotAccepts) {
+		if (slotAccept.slot != currentSlot)
+			_BlPostTaskToWorker(slotAccept.slot, (BlTaskCallback)OnCancelIoPosted, slotAccept.ioAccept);
+		else
+			CancelIoInWorker(worker, 0, (BlAioBase*)slotAccept.ioAccept);
+	}
+	return true;
 }

@@ -21,21 +21,21 @@ namespace bl {
         constexpr void await_resume() const noexcept {}
     };
 
-    template<typename Task, bool suspend_initial>
+    template<typename Task, bool suspend_initial, bool suspend_final>
     struct PromiseBase {
         auto initial_suspend() noexcept { return suspend_<suspend_initial>{}; }
         void unhandled_exception() noexcept {}
 
         auto final_suspend() const noexcept {
             struct awaiter {
-                bool await_ready() const noexcept { return false; }
+                constexpr bool await_ready() const noexcept { return false; }
 
                 std::coroutine_handle<> await_suspend(std::coroutine_handle<typename Task::promise_type> h) noexcept {
                     auto waiter = h.promise().waiter_;
                     return waiter ? waiter : std::noop_coroutine();
                 }
 
-                void await_resume() const noexcept {}
+                constexpr void await_resume() const noexcept {}
             };
             return awaiter{};
         }
@@ -43,18 +43,32 @@ namespace bl {
         std::coroutine_handle<> waiter_;
     };
 
+    template<typename Task, bool suspend_initial>
+    struct PromiseBase<Task, suspend_initial, false> {
+        auto initial_suspend() noexcept { return suspend_<suspend_initial>{}; }
+        void unhandled_exception() noexcept {}
+        auto final_suspend() const noexcept { return std::suspend_never(); }
+    };
+
     /*
     * @brief Coroutine
-    * @param T type of co_return
-    * @param suspend_initial false-don't suspend at initial, true-suspend
+    * @tparam T type of co_return
+    * @tparam suspend_initial false-don't suspend at initial, true-suspend
+    * @tparam suspend_final false-don't suspend at final, true-suspend
     */
-    template<typename T, bool suspend_initial = true>
+    template<typename T, bool suspend_initial=true, bool suspend_final=false>
     struct task {
-        struct promise_type : public PromiseBase<task, suspend_initial> {
-            task get_return_object() noexcept { return { std::coroutine_handle<task::promise_type>::from_promise(*this) }; }
+        struct promise_type : public PromiseBase<task, suspend_initial, suspend_final> {
+            task get_return_object() noexcept { return std::coroutine_handle<task::promise_type>::from_promise(*this); }
             void return_value(T r) noexcept { v_ = r; }
             T v_;
         };
+
+        task(task&& t) : handle_(t.handle_) { t.handle_ = nullptr; }
+        task(std::coroutine_handle<task::promise_type> h) : handle_(h) {}
+        task(const task&) = delete;
+        task& operator=(const task&) = delete;
+        ~task() { if (suspend_final && handle_) handle_.destroy(); }
 
         auto get_handle() const noexcept { return handle_; }
 
@@ -65,12 +79,18 @@ namespace bl {
         std::coroutine_handle<task::promise_type> handle_;
     };
 
-    template<bool suspend_initial>
-    struct task<void, suspend_initial> {
-        struct promise_type : PromiseBase<task, suspend_initial> {
-            task get_return_object() noexcept { return { std::coroutine_handle<task::promise_type>::from_promise(*this) }; }
+    template<bool suspend_initial, bool suspend_final>
+    struct task<void, suspend_initial, suspend_final> {
+        struct promise_type : PromiseBase<task, suspend_initial, suspend_final> {
+            task get_return_object() noexcept { return std::coroutine_handle<task::promise_type>::from_promise(*this); }
             void return_void() noexcept {}
         };
+
+        task(task&& t) : handle_(t.handle_) { t.handle_ = nullptr; }
+        task(std::coroutine_handle<task::promise_type> h) : handle_(h) {}
+        task(const task&) = delete;
+        task& operator=(const task&) = delete;
+        ~task() { if (suspend_final && handle_) handle_.destroy(); }
 
         auto get_handle() const noexcept { return handle_; }
 
@@ -586,34 +606,19 @@ namespace bl {
     typedef std::function<void(const char*, int)> FnTcpServerLog;
     typedef std::function<task<void>(int, const struct sockaddr&, FnTcpServerLog fnLog)> FnStartTcpSession;
 
-    inline task<void> _TcpAcceptLoop(int sock, sa_family_t family, FnStartTcpSession fn, FnTcpServerLog fnLog) {
-        SockAddr peer;
-        for (;;) {
-            int r = co_await TcpAccept(sock, family, &peer);
-            if (r < 0) {
-                fnLog("TcpAccept failed", -r);
-                break;
-            }
-            bl::go(fn(r, *peer.get_sockaddr(), fnLog).get_handle(), true);
-        }
-    }
-
     /*
     * @brief Start a TCP server
     * @param[in] sock the listening socket of server
     * @param[in] fn a function object of type task<void>(int sessionSock, const SockAddr& peer)
+    * @param[in] ioTask will run session handler `fn` as an io task
     * @param[in] fnLog a function object of type void(const char* s, int r), for logging
     * @param[in] numConcurrentAccepts num of concurrent accept calls to be post into ioworkers
+    * @return
+    *   @retval 0 error, call BlGetLastError() for error code
+    *   @retval other a handle for calling xxx to stop the server
     * @warning In fn, peer is a temp object, you should copy it ASAP before next suspend point of the current coroutine.
     */
-    inline void TcpStartServer(int sock, sa_family_t family, FnStartTcpSession fn, FnTcpServerLog fnLog, size_t numConcurrentAccepts = 0) {
-        if (numConcurrentAccepts == 0)
-            numConcurrentAccepts = g_numCpus;
-        for (size_t i = 0; i < numConcurrentAccepts; ++i) {
-            auto t = _TcpAcceptLoop(sock, family, fn, fnLog);
-            bl::go(t.get_handle(), true); // schedule the coroutine to make it balanced
-        }
-    }
+    UINT64 TcpStartServer(int sock, sa_family_t family, FnStartTcpSession fn, bool ioTask, FnTcpServerLog fnLog, size_t numConcurrentAccepts = 0);
 
     struct LazyFileRead : LazyIoBase<BlFileRead_t, int> {
         LazyFileRead(int f, uint64_t offset, void* buf, uint32_t len) {

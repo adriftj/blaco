@@ -155,7 +155,7 @@ static void echo(int sock, const struct sockaddr* peer, void*, const McoTcpServe
 
 const char* echo_test_unix_server_path2 = "./echo_test_unix";
 
-static int echoserver(sa_family_t family, size_t n) {
+static int echoserver(sa_family_t family, size_t n, UINT64& h) {
 	std::cout << "Echo server started in thread " << std::this_thread::get_id() << std::endl;
 	int sockListen;
 	if (family == AF_INET || family == AF_INET6) {
@@ -168,8 +168,8 @@ static int echoserver(sa_family_t family, size_t n) {
 		sockListen = BlUnixNewServer(echo_test_unix_server_path2, true, 100);
 	}
 	REQUIRE(sockListen >= 0);
-	auto opts = new McoTcpServerOptions{n, 0, Log, NULL};
-	McoTcpStartServer(sockListen, family, echo, NULL, opts);
+	McoTcpServerOptions opts{n, 0, Log, NULL};
+	h = McoTcpStartServer(sockListen, family, echo, NULL, true, &opts);
 	return sockListen;
 }
 
@@ -234,12 +234,14 @@ static mco_coro* echoclient(sa_family_t family, int i) {
 
 TEST_CASE("test mco echo server ipv4") {
 	BlInit(0, 0, 0);
-	int sockListen = echoserver(AF_INET, 2);
+	UINT64 hLoop = 0;
+	int sockListen = echoserver(AF_INET, 2, hLoop);
 	mco_coro* coros[2];
 	for (int i = 0; i < 2; ++i)
 		coros[i] = echoclient(AF_INET, i);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
+	REQUIRE(BlSockStopAcceptLoop(hLoop));
+	std::this_thread::sleep_for(std::chrono::seconds(1));
 	for (int i = 0; i < 2; ++i)
 		mco_destroy(coros[i]);
 	BlExitNotify();
@@ -249,12 +251,14 @@ TEST_CASE("test mco echo server ipv4") {
 
 TEST_CASE("test mco echo server ipv6") {
 	BlInit(0, 0, 0);
-	int sockListen = echoserver(AF_INET6, 2);
+	UINT64 hLoop = 0;
+	int sockListen = echoserver(AF_INET6, 2, hLoop);
 	mco_coro* coros[2];
 	for (int i = 0; i < 2; ++i)
 		coros[i] = echoclient(AF_INET6, i);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
+	REQUIRE(BlSockStopAcceptLoop(hLoop));
+	std::this_thread::sleep_for(std::chrono::seconds(1));
 	for (int i = 0; i < 2; ++i)
 		mco_destroy(coros[i]);
 	BlExitNotify();
@@ -264,12 +268,14 @@ TEST_CASE("test mco echo server ipv6") {
 
 TEST_CASE("test mco echo server unix domain socket") {
 	BlInit(0, 0, 0);
-	int sockListen = echoserver(AF_UNIX, 2);
+	UINT64 hLoop = 0;
+	int sockListen = echoserver(AF_UNIX, 2, hLoop);
 	mco_coro* coros[2];
 	for (int i = 0; i < 2; ++i)
 		coros[i] = echoclient(AF_UNIX, i);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	REQUIRE(BlCancelIo(sockListen, NULL) == 0);
+	REQUIRE(BlSockStopAcceptLoop(hLoop));
+	std::this_thread::sleep_for(std::chrono::seconds(1));
 	for (int i = 0; i < 2; ++i)
 		mco_destroy(coros[i]);
 	BlExitNotify();
@@ -328,6 +334,7 @@ TEST_CASE("test mco udp 1") {
 	int r = mco_create(&coroRecv, &desc1);
 	REQUIRE(r == MCO_SUCCESS);
 	McoSchedule(coroRecv, true);
+	std::this_thread::sleep_for(std::chrono::seconds(1));
 
 	mco_desc desc2 = mco_desc_init(udp_sender, 0);
 	mco_coro* coroSend;
@@ -335,6 +342,8 @@ TEST_CASE("test mco udp 1") {
 	REQUIRE(r == MCO_SUCCESS);
 	McoSchedule(coroSend, true);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
+	mco_destroy(coroRecv);
+	mco_destroy(coroSend);
 	BlExitNotify();
 	BlWaitExited();
 }
@@ -418,6 +427,7 @@ TEST_CASE("test mco udp 2") {
 	int r = mco_create(&coroRecv, &desc1);
 	REQUIRE(r == MCO_SUCCESS);
 	McoSchedule(coroRecv, true);
+	std::this_thread::sleep_for(std::chrono::seconds(1));
 
 	mco_desc desc2 = mco_desc_init(udp_sender2, 0);
 	mco_coro* coroSend;
@@ -425,6 +435,8 @@ TEST_CASE("test mco udp 2") {
 	REQUIRE(r == MCO_SUCCESS);
 	McoSchedule(coroSend, true);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
+	mco_destroy(coroRecv);
+	mco_destroy(coroSend);
 	BlExitNotify();
 	BlWaitExited();
 }
@@ -468,6 +480,7 @@ TEST_CASE("test mco file") {
 	REQUIRE(r == MCO_SUCCESS);
 	McoSchedule(coro, true);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
+	mco_destroy(coro);
 	BlExitNotify();
 	BlWaitExited();
 }
